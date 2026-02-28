@@ -194,12 +194,16 @@ class BasePageHandler(ABC):
                 
             # 4. Look for CTA
             # Desktop PDPs: "Enroll Now" / "Buy Now" buttons.
-            # Mobile PDPs:  sticky bottom bar ("Select batch and enroll") that is
-            #               only injected into the DOM after the page is scrolled.
-            # Scroll to bottom first so the sticky element is triggered, then wait
-            # briefly for it to render before querying.
+            # Mobile PDPs:  sticky bottom bar ("Select batch and enroll").
+            # Mobile requires a reload to properly render layout/sticky elements after
+            # viewport change; desktop renders correctly on first load so skip the reload.
+            if self.viewport == 'mobile':
+                self.page.reload(wait_until="domcontentloaded")
+                time.sleep(1) # short buffer after reload
+
+            # Scroll to bottom to trigger sticky element in case it relies on scroll
             self.page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-            self.page.wait_for_timeout(1500)
+            self.page.wait_for_timeout(1000)
 
             cta_status = "Not Found"
             cta_keywords = ["enroll now", "enrol now", "buy now", "select batch"]
@@ -543,5 +547,7 @@ class ScraperEngine:
         ).save()
 
 if __name__ == "__main__":
-    engine = ScraperEngine()
+    import sys
+    urls_file = sys.argv[1] if len(sys.argv) > 1 else "urls.txt"
+    engine = ScraperEngine(urls_file)
     engine.run()
