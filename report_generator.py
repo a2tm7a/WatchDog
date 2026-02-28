@@ -72,6 +72,7 @@ class ReportGenerator:
         sections = [
             self._section_header(duration_str),
             self._section_summary(summary, db_stats),
+            self._section_url_summary(issues),
             self._section_issue_breakdown(summary),
             self._section_details(issues),
         ]
@@ -124,6 +125,29 @@ class ReportGenerator:
             f"| CTA missing on PDP | {d_cta_missing} | {m_cta_missing} | **{t_cta_missing}** |",
             f"| **Validation issues** | | | **{summary.get('total_issues', 0)}** |",
         ]
+        return "\n".join(lines)
+
+    def _section_url_summary(self, issues: list) -> str:
+        if not issues:
+            return "## Errors by URL\n\n✅ No errors found."
+            
+        # Group issues by base_url
+        url_counts = {}
+        for issue in issues:
+            url = getattr(issue, 'base_url', 'Unknown URL')
+            url_counts[url] = url_counts.get(url, 0) + 1
+            
+        lines = [
+            "## Errors by URL",
+            "",
+            "| URL | Issue Count |",
+            "|-----|-------------|"
+        ]
+        
+        # Sort by issue count descending
+        for url, count in sorted(url_counts.items(), key=lambda x: x[1], reverse=True):
+            lines.append(f"| {url} | **{count}** |")
+            
         return "\n".join(lines)
 
     def _section_issue_breakdown(self, summary: dict) -> str:

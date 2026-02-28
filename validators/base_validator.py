@@ -19,6 +19,7 @@ class ValidationResult:
     expected: Any = None
     actual: Any = None
     viewport: str = 'desktop'  # 'desktop' | 'mobile'
+    base_url: str = 'Unknown'
 
 
 class BaseValidator(ABC):
@@ -51,6 +52,14 @@ class BaseValidator(ABC):
         """
         issues = self._validate(course_data)
         
+        # Auto-inject viewport and base_url into all issues
+        viewport = course_data.get('viewport', 'desktop')
+        base_url = course_data.get('base_url', 'Unknown')
+        for issue in issues:
+            if not hasattr(issue, 'viewport') or issue.viewport == 'desktop':
+                issue.viewport = viewport
+            issue.base_url = base_url
+            
         # Chain to next validator
         if self.next_validator:
             issues.extend(self.next_validator.validate(course_data))

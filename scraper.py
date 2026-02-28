@@ -443,7 +443,8 @@ class ScraperEngine:
         self.handler_map = {
             "HOME": HomepageHandler,
             "PLP_PAGES": PLPHandler,
-            "STREAM_PAGES": StreamHandler
+            "STREAM_PAGES": StreamHandler,
+            "RESULTS_PAGES": StreamHandler
         }
 
     def parse_urls(self):
