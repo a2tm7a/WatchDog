@@ -1,6 +1,6 @@
 """
 Report Generator
-Produces a human-readable Markdown report for every scraper run.
+Produces a human-readable Markdown report for every WatchDog scraper run.
 Reports are saved to the reports/ directory with a timestamp in the filename.
 """
 
@@ -82,7 +82,7 @@ class ReportGenerator:
 
     def _section_header(self, duration_str: str) -> str:
         lines = [
-            f"# Verification Run Report",
+            f"# WatchDog Run Report",
             f"",
             f"| | |",
             f"|---|---|",

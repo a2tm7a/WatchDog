@@ -1,6 +1,6 @@
 """
 Email Notification Service
-Sends a validation report email at the end of a scraper run.
+Sends a WatchDog validation report email at the end of each scraper run.
 
 Configuration lives in email_config.json (gitignored):
   {
@@ -13,7 +13,7 @@ Configuration lives in email_config.json (gitignored):
       "username": "you@gmail.com",
       "password": "app-password"
     },
-    "from": "ALLEN Verifier <you@gmail.com>",
+    "from": "WatchDog <you@gmail.com>",
     "to": ["one@example.com", "two@example.com"]
   }
 
@@ -38,7 +38,7 @@ CONFIG_FILE = os.path.join(os.path.dirname(__file__), "email_config.json")
 
 class EmailService:
     """
-    Reads email_config.json and sends the scraper validation report.
+    Reads email_config.json and sends the WatchDog validation report.
 
     Gracefully no-ops when:
     - Config file is missing
@@ -127,7 +127,7 @@ class EmailService:
                 cfg["to"] = [a.strip() for a in env_to.split(",") if a.strip()]
             cfg.setdefault("from", os.environ.get(
                 "EMAIL_FROM",
-                f"ALLEN Verifier <{env_username}>" if env_username else "ALLEN Verifier"
+                f"WatchDog <{env_username}>" if env_username else "WatchDog"
             ))
             cfg.setdefault("send_on", os.environ.get("EMAIL_SEND_ON", "errors"))
 
@@ -163,13 +163,13 @@ class EmailService:
         by_type = summary.get("by_type", {})
         by_severity = summary.get("by_severity", {})
         recipients = self.config.get("to", [])
-        sender = self.config.get("from", "ALLEN Verifier")
+        sender = self.config.get("from", "WatchDog")
 
         timestamp = (start_time or datetime.now()).strftime("%Y-%m-%d %H:%M")
         subject = (
-            f"⚠️ [{timestamp}] ALLEN Verifier — {total} issue{'s' if total != 1 else ''} found"
+            f"⚠️ [{timestamp}] WatchDog — {total} issue{'s' if total != 1 else ''} found"
             if total > 0
-            else f"✅ [{timestamp}] ALLEN Verifier — All checks passed"
+            else f"✅ [{timestamp}] WatchDog — All checks passed"
         )
 
         msg = MIMEMultipart("alternative")
@@ -258,7 +258,7 @@ class EmailService:
     </p>
   </div>
   <div class="footer">
-    ALLEN Verifier &mdash; automated scrape &amp; validation report
+    WatchDog &mdash; automated scrape &amp; validation report
   </div>
 </div>
 </body>

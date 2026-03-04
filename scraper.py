@@ -1,3 +1,25 @@
+"""
+WatchDog — Scraper Engine
+=========================
+Playwright-based web scraper and validator for allen.in.
+
+Entry point: run ``python3 scraper.py [urls_file]``
+
+Key classes
+-----------
+DatabaseManager    — SQLite persistence (WAL mode, thread-safe writes).
+PdpCache           — Thread-safe in-memory cache for PDP verification results,
+                     keyed by (pdp_url, viewport).  Avoids re-visiting the same
+                     PDP more than once per run.
+ProgressTracker    — Thread-safe [N/total] log-prefix counter per viewport pass.
+BasePageHandler    — Abstract base with shared helpers (verify_pdp, extract_cta_link,
+                     clean_price, safe_get_text).
+HomepageHandler    — Scrapes tab-based course cards (JEE / NEET / Classes 6-10).
+PLPHandler         — Scrapes filter-pill based Product Listing Pages.
+StreamHandler      — Scrapes class-tab based Olympiad / Results pages.
+ScraperEngine      — Orchestrator: parses urls.txt, launches desktop + mobile viewport
+                     threads, runs validation, saves reports, sends email.
+"""
 import sqlite3
 import os
 import re

@@ -8,7 +8,7 @@
         "username": "your@gmail.com",
         "password": "your-app-password"
     },
-    "from": "ALLEN Verifier <your@gmail.com>",
+    "from": "WatchDog <your@gmail.com>",
     "to": [
         "recipient@example.com"
     ]
