@@ -295,12 +295,23 @@ class BasePageHandler(ABC):
 
             cta_status = "Not Found"
             cta_keywords = ["enroll now", "enrol now", "buy now", "select batch"]
-            buttons = self.page.locator('button, a').all()
+            buttons = self.page.locator('button, a, input[type="button"], input[type="submit"]').all()
             for btn in buttons:
                 try:
+                    # inner_text() can return "" for sticky/fixed elements in headless mobile
+                    # rendering — DOM node exists but layout hasn't been fully computed.
+                    # Fall back through text_content() → aria-label → value attribute.
                     text = btn.inner_text().strip().lower()
-                    if any(kw == text or (kw in text and len(text) < 40) for kw in cta_keywords):
-                        cta_status = f"Found ({btn.inner_text().strip()})"
+                    if not text:
+                        text = (btn.text_content() or "").strip().lower()
+                    if not text:
+                        text = (btn.get_attribute("aria-label") or "").strip().lower()
+                    if not text:
+                        text = (btn.get_attribute("value") or "").strip().lower()
+
+                    if text and any(kw == text or (kw in text and len(text) < 40) for kw in cta_keywords):
+                        display = btn.inner_text().strip() or btn.text_content().strip() or text
+                        cta_status = f"Found ({display})"
                         break
                 except Exception:
                     continue
