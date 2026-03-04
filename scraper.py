@@ -476,7 +476,9 @@ class StreamHandler(BasePageHandler):
         time.sleep(3)
 
         # Identify Class Tabs (Class 8, Class 9, etc.)
-        tab_loc = self.page.locator('button, div').filter(has_text=re.compile(r'^Class \d+$'))
+        # Important: restrict to <button> only — bare <div> matches decorative class-grid
+        # elements on pages like aiot-register, creating phantom tab loops.
+        tab_loc = self.page.locator('button').filter(has_text=re.compile(r'^Class \d+$'))
         tab_count = tab_loc.count()
         tabs_info = []
         for i in range(tab_count):
@@ -490,8 +492,8 @@ class StreamHandler(BasePageHandler):
             
             active_tab = None
             if tabs_info:
-                # Find all potential tabs and select the one matching the name
-                active_tab = self.page.locator('button, div').filter(has_text=tab_name).first
+                # Click the matching button tab
+                active_tab = self.page.locator('button').filter(has_text=tab_name).first
                 active_tab.evaluate("el => el.click()")
                 time.sleep(2)
 
