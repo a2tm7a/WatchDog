@@ -346,9 +346,20 @@ class HomepageHandler(BasePageHandler):
 
     def scrape(self, url):
         logging.debug(f"HomepageHandler: {url}")
-        self.page.goto(url, wait_until="domcontentloaded")
-        time.sleep(3)
-        
+        # networkidle waits for all API calls (course data) to complete before
+        # we start scanning — critical in CI where domcontentloaded fires too early.
+        self.page.goto(url, wait_until="networkidle", timeout=60000)
+
+        # Explicitly wait for the tab elements that signal the React app is mounted.
+        # If they don't appear within 15s, the page may have been blocked (Cloudflare).
+        try:
+            self.page.wait_for_selector('div[data-testid*="TAB_ITEM"]', timeout=15000)
+        except Exception:
+            logging.warning(f"HomepageHandler: Tab elements not found after 15s on {url}. "
+                            "Page may not have rendered fully (possible bot-detection).")
+
+        time.sleep(2)  # allow SPA animations / delayed content to settle
+
         # Identify Tabs (JEE, NEET, etc.)
         tab_loc = self.page.locator('div[data-testid*="TAB_ITEM"]')
         tabs = []
