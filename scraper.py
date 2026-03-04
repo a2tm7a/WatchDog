@@ -10,6 +10,7 @@ from datetime import datetime
 from playwright.sync_api import sync_playwright
 from validation_service import ValidationService
 from report_generator import ReportGenerator
+from email_service import EmailService
 
 # iPhone XR — logical resolution 390×844, touch, mobile Safari user-agent
 MOBILE_DEVICE = "iPhone XR"
@@ -706,13 +707,21 @@ class ScraperEngine:
         validator.log_results()
 
         # Save human-readable report
-        ReportGenerator(
+        report_file = ReportGenerator(
             validation_service=validator,
             db_name=self.db.db_name,
             start_time=start_time,
             urls_scraped=url_list,
             run_id=run_id,
         ).save()
+
+        # Email notification (reads email_config.json; gracefully no-ops if not configured)
+        EmailService().send_report(
+            report_path=report_file,
+            validation_summary=validator.get_summary(),
+            run_id=run_id,
+            start_time=start_time,
+        )
 
 if __name__ == "__main__":
     import sys
