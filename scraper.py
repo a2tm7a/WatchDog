@@ -346,16 +346,15 @@ class HomepageHandler(BasePageHandler):
 
     def scrape(self, url):
         logging.debug(f"HomepageHandler: {url}")
-        # networkidle waits for all API calls (course data) to complete before
-        # we start scanning — critical in CI where domcontentloaded fires too early.
-        self.page.goto(url, wait_until="networkidle", timeout=60000)
+        # networkidle is too slow (can take 60s+ if background tracking pixels stay open)
+        # Instead, load the DOM and wait explicitly for the course cards to appear.
+        self.page.goto(url, wait_until="domcontentloaded")
 
-        # Explicitly wait for the tab elements that signal the React app is mounted.
-        # If they don't appear within 15s, the page may have been blocked (Cloudflare).
         try:
-            self.page.wait_for_selector('div[data-testid*="TAB_ITEM"]', timeout=15000)
+            # Wait up to 15s for the actual course cards to render from the API
+            self.page.wait_for_selector('div.rounded-normal.flex.flex-col', timeout=15000)
         except Exception:
-            logging.warning(f"HomepageHandler: Tab elements not found after 15s on {url}. "
+            logging.warning(f"HomepageHandler: Cards not found after 15s on {url}. "
                             "Page may not have rendered fully (possible bot-detection).")
 
         time.sleep(2)  # allow SPA animations / delayed content to settle
