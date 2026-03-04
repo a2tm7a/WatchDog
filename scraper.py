@@ -95,19 +95,25 @@ class DatabaseManager:
                 logging.debug(f"[{viewport}] Saved {new_items} courses (run #{run_id}).")
 
     def get_url_stats(self, base_url: str, run_id: int, viewport: str) -> dict:
-        """Return total card count + issue count for a URL in this run/viewport."""
+        """Return total card count + issue count for a URL in this run/viewport.
+
+        Issues = broken links + price mismatches + missing CTA buttons.
+        All three flags must agree with the validation report.
+        """
         with sqlite3.connect(self.db_name, timeout=30) as conn:
             cursor = conn.cursor()
             cursor.execute(
-                "SELECT COUNT(*), SUM(is_broken), SUM(price_mismatch) "
+                "SELECT COUNT(*), SUM(is_broken), SUM(price_mismatch), "
+                "SUM(CASE WHEN cta_status = 'Not Found' THEN 1 ELSE 0 END) "
                 "FROM courses WHERE base_url=? AND run_id=? AND viewport=?",
                 (base_url, run_id, viewport)
             )
             row = cursor.fetchone()
-            total   = row[0] or 0
-            broken  = row[1] or 0
-            mismatch = row[2] or 0
-            return {"cards": total, "issues": broken + mismatch}
+            total       = row[0] or 0
+            broken      = row[1] or 0
+            mismatch    = row[2] or 0
+            cta_missing = row[3] or 0
+            return {"cards": total, "issues": broken + mismatch + cta_missing}
 
 # --- PDP RESULT CACHE ---
 class PdpCache:
