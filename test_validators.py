@@ -5,7 +5,7 @@ Shows how easy it is to add new validators and use the system.
 
 import sqlite3
 from validation_service import ValidationService
-from validators import BrokenLinkValidator, PriceMismatchValidator, ValidationResult
+from validators import PurchaseCTAValidator, PriceMismatchValidator, ValidationResult
 
 
 def test_individual_validators():
@@ -18,10 +18,11 @@ def test_individual_validators():
     broken_course = {
         'course_name': 'Test Course with Broken Link',
         'base_url': 'https://allen.in/',
-        'cta_link': 'https://allen.in/',  # Same as base - broken!
+        'cta_link': 'https://allen.in/',  # Same as base — link stays on listing, i.e. broken
         'price': '₹ 10,000',
         'pdp_price': '₹ 10,000',
-        'is_broken': 0,
+        'cta_status': 'N/A',
+        'is_broken': 1,
         'price_mismatch': 0
     }
     
@@ -35,9 +36,9 @@ def test_individual_validators():
         'price_mismatch': 1
     }
     
-    # Test BrokenLinkValidator
-    print("\n1. Testing BrokenLinkValidator:")
-    broken_validator = BrokenLinkValidator()
+    # Test PurchaseCTAValidator (covers broken links + missing buy button)
+    print("\n1. Testing PurchaseCTAValidator (broken link case):")
+    broken_validator = PurchaseCTAValidator()
     issues = broken_validator.validate(broken_course)
     for issue in issues:
         print(f"   [{issue.severity}] {issue.message}")
@@ -62,20 +63,21 @@ def test_validator_chain():
     multi_issue_course = {
         'course_name': 'Course with Multiple Issues',
         'base_url': 'https://allen.in/',
-        'cta_link': 'https://allen.in/',  # Broken
+        'cta_link': 'https://allen.in/',   # Same as base — broken
         'price': '₹ 10,000',
-        'pdp_price': 'Not Found',  # Price mismatch
+        'pdp_price': '₹ 15,000',           # Price mismatch
+        'cta_status': 'N/A',
         'is_broken': 1,
-        'price_mismatch': 0
+        'price_mismatch': 1
     }
     
-    # Build chain
-    broken_validator = BrokenLinkValidator()
+    # Build chain: CTA check first, price mismatch second
+    cta_validator = PurchaseCTAValidator()
     price_validator = PriceMismatchValidator()
-    broken_validator.set_next(price_validator)
+    cta_validator.set_next(price_validator)
     
     # Run validation through chain
-    issues = broken_validator.validate(multi_issue_course)
+    issues = cta_validator.validate(multi_issue_course)
     
     print(f"\nFound {len(issues)} issues:")
     for i, issue in enumerate(issues, 1):
@@ -144,7 +146,7 @@ To add a new validator (e.g., StartDateValidator):
 
 3. Add to ValidationService chain:
     start_date = StartDateValidator()
-    broken_link.set_next(price_mismatch).set_next(start_date)
+    cta.set_next(price_mismatch).set_next(start_date)
 
 That's it! No changes to scraper.py or handlers needed.
     """)
