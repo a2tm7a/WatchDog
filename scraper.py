@@ -91,7 +91,22 @@ class DatabaseManager:
                 new_items += 1
             conn.commit()
             if new_items > 0:
-                logging.info(f"[{viewport}] Successfully saved {new_items} new courses (run #{run_id}).")
+                logging.debug(f"[{viewport}] Saved {new_items} courses (run #{run_id}).")
+
+    def get_url_stats(self, base_url: str, run_id: int, viewport: str) -> dict:
+        """Return total card count + issue count for a URL in this run/viewport."""
+        with sqlite3.connect(self.db_name, timeout=30) as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT COUNT(*), SUM(is_broken), SUM(price_mismatch) "
+                "FROM courses WHERE base_url=? AND run_id=? AND viewport=?",
+                (base_url, run_id, viewport)
+            )
+            row = cursor.fetchone()
+            total   = row[0] or 0
+            broken  = row[1] or 0
+            mismatch = row[2] or 0
+            return {"cards": total, "issues": broken + mismatch}
 
 # --- PDP RESULT CACHE ---
 class PdpCache:
@@ -120,6 +135,27 @@ class PdpCache:
     def size(self) -> int:
         with self._lock:
             return len(self._cache)
+
+
+# --- PROGRESS TRACKER ---
+class ProgressTracker:
+    """
+    Thread-safe counter that shows [N/total] progress for a scrape pass.
+    Each viewport thread owns its own tracker so the counts stay independent.
+    """
+    def __init__(self, total: int, label: str):
+        self.total = total
+        self.label = label.upper()
+        self._done = 0
+        self._lock = threading.Lock()
+        # Width of the total number for zero-padded formatting, e.g. " 3/31"
+        self._w = len(str(total))
+
+    def advance(self) -> str:
+        """Increment counter and return a formatted '[N/total]' prefix string."""
+        with self._lock:
+            self._done += 1
+            return f"[{self.label} {self._done:{self._w}}/{self.total}]"
 
 
 # --- BASE HANDLER STRATEGY ---
@@ -211,11 +247,11 @@ class BasePageHandler(ABC):
         if self.pdp_cache is not None:
             cached = self.pdp_cache.get(pdp_url, self.viewport)
             if cached is not None:
-                logging.info(f"     [PDP CACHE HIT] {pdp_url} ({self.viewport})")
+                logging.debug(f"  [CACHE HIT] {pdp_url} ({self.viewport})")
                 return cached
             
         try:
-            logging.info(f"     Verifying PDP: {pdp_url}")
+            logging.debug(f"  → PDP: {pdp_url}")
             self.page.goto(pdp_url, wait_until="domcontentloaded", timeout=30000)
             time.sleep(2)
             
@@ -291,7 +327,7 @@ class HomepageHandler(BasePageHandler):
         return url.strip('/') == "https://allen.in"
 
     def scrape(self, url):
-        logging.info(f"Using HomepageHandler for {url}")
+        logging.debug(f"HomepageHandler: {url}")
         self.page.goto(url, wait_until="domcontentloaded")
         time.sleep(3)
         
@@ -304,7 +340,7 @@ class HomepageHandler(BasePageHandler):
                 tabs.append((t, txt))
 
         for tab_el, tab_name in (tabs if tabs else [(None, "Main")]):
-            logging.info(f"--- Category: {tab_name} ---")
+            logging.debug(f"  Tab: {tab_name}")
             if tab_el:
                 tab_el.evaluate("el => el.click()")
                 time.sleep(2)
@@ -325,16 +361,14 @@ class HomepageHandler(BasePageHandler):
                 if name == "N/A" or f"{tab_name}_{name}" in self.processed_keys: continue
                 self.processed_keys.add(f"{tab_name}_{name}")
 
-                logging.info(f"  -> {name}")
+                logging.debug(f"    Card: {name}")
                 card_price = self.safe_get_text(card, ['[class*="price"]', '[class*="fee"]', 'h3'])
                 link = self.extract_cta_link(card, tab_el, tab_name)
-                logging.info(f"     Listing URL: {link}")
                 
                 # Verify PDP
                 pdp_price, cta_status, is_broken, mismatch = self.verify_pdp(link, url, card_price)
                 
-                logging.info(f"     PDP Price: {pdp_price} | CTA: {cta_status}")
-                if is_broken: logging.warning(f"     [FLAG] Broken Link: {link}")
+                if is_broken: logging.warning(f"  ⚠️  Broken link for '{name}': {link}")
 
                 scraped_batch.append({
                     "base_url": url,
@@ -357,7 +391,7 @@ class PLPHandler(BasePageHandler):
         return "/online-coaching-" in url or ("/neet/" in url and url.strip('/') != "https://allen.in")
 
     def scrape(self, url):
-        logging.info(f"Using PLPHandler for {url}")
+        logging.debug(f"PLPHandler: {url}")
         self.page.goto(url, wait_until="domcontentloaded")
         time.sleep(3)
 
@@ -372,7 +406,7 @@ class PLPHandler(BasePageHandler):
 
         for p_idx in range(max(1, pill_count)):
             pill_name = pills_info[p_idx] if pills_info else "Default"
-            logging.info(f"--- Filter: {pill_name} ---")
+            logging.debug(f"  Filter: {pill_name}")
             
             # Re-select the pill by index to avoid stale element issues
             active_pill = pills_loc.nth(p_idx) if pills_info else None
@@ -396,16 +430,14 @@ class PLPHandler(BasePageHandler):
                 if name == "N/A" or f"{pill_name}_{name}" in self.processed_keys: continue
                 self.processed_keys.add(f"{pill_name}_{name}")
 
-                logging.info(f"  -> {name}")
+                logging.debug(f"    Card: {name}")
                 card_price = self.safe_get_text(card, ['[class*="price"]', '[class*="fee"]', 'h3'])
                 link = self.extract_cta_link(card, active_pill, pill_name)
-                logging.info(f"     Listing URL: {link}")
 
                 # Verify PDP
                 pdp_price, cta_status, is_broken, mismatch = self.verify_pdp(link, url, card_price)
                 
-                logging.info(f"     PDP Price: {pdp_price} | CTA: {cta_status}")
-                if is_broken: logging.warning(f"     [FLAG] Broken Link: {link}")
+                if is_broken: logging.warning(f"  ⚠️  Broken link for '{name}': {link}")
 
                 scraped_batch.append({
                     "base_url": url,
@@ -428,7 +460,7 @@ class StreamHandler(BasePageHandler):
         return "/international-olympiads" in url
 
     def scrape(self, url):
-        logging.info(f"Using StreamHandler for {url}")
+        logging.debug(f"StreamHandler: {url}")
         self.page.goto(url, wait_until="domcontentloaded")
         time.sleep(3)
 
@@ -443,7 +475,7 @@ class StreamHandler(BasePageHandler):
 
         for t_idx in range(max(1, len(tabs_info))):
             tab_name = tabs_info[t_idx] if tabs_info else "Default"
-            logging.info(f"--- Stream Category: {tab_name} ---")
+            logging.debug(f"  Tab: {tab_name}")
             
             active_tab = None
             if tabs_info:
@@ -469,14 +501,12 @@ class StreamHandler(BasePageHandler):
                 if name == "N/A" or f"{tab_name}_{name}" in self.processed_keys: continue
                 self.processed_keys.add(f"{tab_name}_{name}")
 
-                logging.info(f"  -> {name}")
+                logging.debug(f"    Card: {name}")
                 card_price = self.safe_get_text(card, ['h3', '[class*="price"]'])
                 link = self.extract_cta_link(card, active_tab, tab_name)
-                logging.info(f"     Listing URL: {link}")
 
                 pdp_price, cta_status, is_broken, mismatch = self.verify_pdp(link, url, card_price)
-                logging.info(f"     PDP Price: {pdp_price} | CTA: {cta_status}")
-                if is_broken: logging.warning(f"     [FLAG] Broken Link: {link}")
+                if is_broken: logging.warning(f"  ⚠️  Broken link for '{name}': {link}")
 
                 scraped_batch.append({
                     "base_url": url,
@@ -535,34 +565,32 @@ class ScraperEngine:
         Scrape all tasks under one browser context.
 
         IMPORTANT — Playwright sync_api is NOT thread-safe.
-        A single browser/context cannot be shared across threads; doing so corrupts
-        the internal asyncio event loop and causes 'Connection closed' crashes.
-
-        Fix: each URL worker creates its own independent sync_playwright() session
-        (separate browser process).  Workers are I/O-bound so the overhead of
-        launching extra browser instances is small compared to page load times.
-
-        The shared PdpCache is still passed into every handler (it is thread-safe
-        via its own Lock), so duplicate PDP navigations are still avoided.
+        Each URL worker creates its own independent sync_playwright() session.
+        The shared PdpCache is thread-safe via its own Lock.
         """
-        logging.info(f"[{label.upper()}] Starting scrape pass ({len(tasks)} URLs, parallel)")
+        progress = ProgressTracker(len(tasks), label)
+        logging.info(f"[{label.upper()}] ▶  Starting — {len(tasks)} URLs")
 
         # Number of concurrent URL workers per viewport.
-        # Each spawns its own headless Chrome; 4 is a safe default.
         MAX_URL_WORKERS = 4
 
         def _scrape_one_url(tag: str, url: str):
             """Worker: own playwright session → own browser → own page."""
+            prefix = progress.advance()
             handler_class = self.handler_map.get(tag)
             if not handler_class:
-                logging.warning(f"No handler for tag: [{tag}]")
+                logging.warning(f"{prefix} ⚠️  No handler for tag [{tag}] — skipping {url}")
                 return
+
+            logging.info(f"{prefix} 🔄 {url}")
+            t0 = time.time()
+            success = True
+
             with sync_playwright() as pw:
                 browser = pw.chromium.launch(headless=True)
                 try:
                     context = browser.new_context(**context_kwargs)
                     page = context.new_page()
-                    logging.info(f"[{label.upper()}] {tag} -> {url}")
                     handler = handler_class(
                         page, self.db,
                         viewport=label,
@@ -571,9 +599,24 @@ class ScraperEngine:
                     )
                     handler.scrape(url)
                 except Exception as e:
-                    logging.error(f"[{label.upper()}] Error on {url}: {e}")
+                    success = False
+                    logging.error(f"{prefix} 💥 Error scraping {url}: {e}")
                 finally:
                     browser.close()
+
+            elapsed = time.time() - t0
+            if success:
+                stats = self.db.get_url_stats(url, run_id, label)
+                if stats["issues"] == 0:
+                    logging.info(
+                        f"{prefix} ✅ {url}  "
+                        f"({stats['cards']} cards, all OK, {elapsed:.0f}s)"
+                    )
+                else:
+                    logging.info(
+                        f"{prefix} ❌ {url}  "
+                        f"({stats['cards']} cards, {stats['issues']} issue(s), {elapsed:.0f}s)"
+                    )
 
         with ThreadPoolExecutor(max_workers=MAX_URL_WORKERS) as url_pool:
             futures = {
@@ -587,7 +630,7 @@ class ScraperEngine:
                 except Exception as e:
                     logging.error(f"[{label.upper()}] Unhandled error for {url}: {e}")
 
-        logging.info(f"[{label.upper()}] Scrape pass complete")
+        logging.info(f"[{label.upper()}] ✔  All {len(tasks)} URLs done")
 
     def run(self):
         tasks = self.parse_urls()

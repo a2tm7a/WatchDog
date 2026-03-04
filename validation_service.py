@@ -122,21 +122,32 @@ class ValidationService:
         if not self.validation_results:
             logging.info("✓ No validation issues found!")
             return
-        
+
+        # Deduplicate: the same course can be scraped from multiple entry-point URLs.
+        # Keep one representative issue per (course_name, type, viewport) triple.
+        seen: set = set()
+        unique_results = []
+        for r in self.validation_results:
+            key = (r.course_name, r.type, r.viewport)
+            if key not in seen:
+                seen.add(key)
+                unique_results.append(r)
+
         summary = self.get_summary()
-        
+
         logging.info("=" * 60)
         logging.info("VALIDATION REPORT")
         logging.info("=" * 60)
-        logging.info(f"Total Issues Found: {summary['total_issues']}")
+        logging.info(f"Total Issues Found: {summary['total_issues']} "
+                     f"({len(unique_results)} unique after dedup)")
         logging.info("")
-        
+
         # By Type
         logging.info("Issues by Type:")
         for issue_type, count in summary['by_type'].items():
             logging.info(f"  {issue_type}: {count}")
         logging.info("")
-        
+
         # By Severity
         logging.info("Issues by Severity:")
         for severity in ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW']:
@@ -144,16 +155,18 @@ class ValidationService:
             if count > 0:
                 logging.warning(f"  {severity}: {count}")
         logging.info("")
-        
-        # Detailed Issues (Critical and High only)
-        critical_and_high = [r for r in self.validation_results if r.severity in ['CRITICAL', 'HIGH']]
+
+        # Detailed Issues (Critical and High only, deduplicated)
+        critical_and_high = [r for r in unique_results if r.severity in ['CRITICAL', 'HIGH']]
         if critical_and_high:
-            logging.info("Critical & High Severity Issues:")
+            logging.info(f"Critical & High Severity Issues ({len(critical_and_high)} unique):")
             for result in critical_and_high:
-                logging.warning(f"  [{result.severity}] {result.course_name}")
+                vp_tag = f"[{result.viewport}]" if result.viewport else ""
+                logging.warning(f"  [{result.severity}] {vp_tag} {result.course_name}")
                 logging.warning(f"    {result.message}")
                 if result.expected and result.actual:
                     logging.warning(f"    Expected: {result.expected}")
-                    logging.warning(f"    Actual: {result.actual}")
-        
+                    logging.warning(f"    Actual:   {result.actual}")
+
         logging.info("=" * 60)
+
