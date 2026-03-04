@@ -2,6 +2,7 @@ import sqlite3
 import os
 import re
 import logging
+import threading
 import time
 from abc import ABC, abstractmethod
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -92,15 +93,45 @@ class DatabaseManager:
             if new_items > 0:
                 logging.info(f"[{viewport}] Successfully saved {new_items} new courses (run #{run_id}).")
 
+# --- PDP RESULT CACHE ---
+class PdpCache:
+    """
+    Thread-safe in-memory cache for PDP verification results.
+    Key: (pdp_url, viewport)  →  Value: (pdp_price, cta_status, is_broken, price_mismatch)
+
+    Multiple entry-point URLs (HOME, STREAM_PAGES, PLP_PAGES) frequently surface the same
+    course card pointing to the same PDP.  Caching avoids re-navigating pages that have
+    already been checked in the current run, which can save dozens of 8-12 s round-trips.
+    """
+    def __init__(self):
+        self._cache: dict = {}
+        self._lock = threading.Lock()
+
+    def get(self, pdp_url: str, viewport: str):
+        """Return cached result tuple or None if not cached."""
+        with self._lock:
+            return self._cache.get((pdp_url, viewport))
+
+    def set(self, pdp_url: str, viewport: str, result: tuple):
+        """Store a result tuple for the given (url, viewport) pair."""
+        with self._lock:
+            self._cache[(pdp_url, viewport)] = result
+
+    def size(self) -> int:
+        with self._lock:
+            return len(self._cache)
+
+
 # --- BASE HANDLER STRATEGY ---
 class BasePageHandler(ABC):
     """Abstract base class for all page-specific scraping logic."""
 
-    def __init__(self, page, db_manager, viewport: str = 'desktop', run_id: int = None):
+    def __init__(self, page, db_manager, viewport: str = 'desktop', run_id: int = None, pdp_cache: PdpCache = None):
         self.page = page
         self.db = db_manager
         self.viewport = viewport  # 'desktop' | 'mobile'
         self.run_id = run_id
+        self.pdp_cache = pdp_cache  # shared, thread-safe PDP result cache
         self.processed_keys = set()
 
     def clean_price(self, price_str):
@@ -168,9 +199,20 @@ class BasePageHandler(ABC):
         return self.page.url
 
     def verify_pdp(self, pdp_url, original_url, card_price=None):
-        """Navigates to the PDP and returns found price, CTA status, and verification flags."""
+        """Navigates to the PDP and returns found price, CTA status, and verification flags.
+        
+        Results are cached per (pdp_url, viewport) so that the same PDP is never
+        visited more than once per run, regardless of how many listing pages link to it.
+        """
         if not pdp_url or pdp_url == original_url:
             return "N/A", "N/A", 1, 0  # Broken if it didn't lead to a new page
+
+        # --- Cache look-up ---
+        if self.pdp_cache is not None:
+            cached = self.pdp_cache.get(pdp_url, self.viewport)
+            if cached is not None:
+                logging.info(f"     [PDP CACHE HIT] {pdp_url} ({self.viewport})")
+                return cached
             
         try:
             logging.info(f"     Verifying PDP: {pdp_url}")
@@ -229,7 +271,13 @@ class BasePageHandler(ABC):
             
             # Navigate back to original context
             self.page.goto(original_url, wait_until="domcontentloaded")
-            return pdp_price, cta_status, is_broken, price_mismatch
+            result = (pdp_price, cta_status, is_broken, price_mismatch)
+
+            # --- Cache store ---
+            if self.pdp_cache is not None:
+                self.pdp_cache.set(pdp_url, self.viewport, result)
+
+            return result
         except Exception as e:
             logging.warning(f"     PDP verification failed: {e}")
             try: self.page.goto(original_url, wait_until="domcontentloaded")
@@ -482,29 +530,62 @@ class ScraperEngine:
                         logging.warning(f"URL found without category: {line}")
         return tasks
 
-    def _run_viewport(self, tasks: list, label: str, context_kwargs: dict, run_id: int):
+    def _run_viewport(self, tasks: list, label: str, context_kwargs: dict, run_id: int, pdp_cache: PdpCache = None):
         """
         Scrape all tasks under one browser context.
-        Designed to run in its own thread — each call creates an independent
-        sync_playwright() session so there is no cross-thread state sharing.
+
+        Each call creates an independent sync_playwright() session (no cross-thread state).
+        Within the session, individual URLs are scraped in parallel: each URL worker opens
+        its own page so I/O-bound navigations do not block each other.
+
+        The shared PdpCache is passed into every handler so that PDPs already verified by
+        one URL worker are not re-visited by another.
         """
-        logging.info(f"[{label.upper()}] Starting scrape pass")
+        logging.info(f"[{label.upper()}] Starting scrape pass ({len(tasks)} URLs, parallel)")
+
+        # Number of concurrent URL workers per viewport.
+        # 4 is a good balance: enough concurrency without overloading the headless browser.
+        MAX_URL_WORKERS = 4
+
+        def _scrape_one_url(tag: str, url: str, context):
+            """Worker: open a dedicated page, run the handler, close the page."""
+            handler_class = self.handler_map.get(tag)
+            if not handler_class:
+                logging.warning(f"No handler for tag: [{tag}]")
+                return
+            page = context.new_page()
+            try:
+                logging.info(f"[{label.upper()}] {tag} -> {url}")
+                handler = handler_class(
+                    page, self.db,
+                    viewport=label,
+                    run_id=run_id,
+                    pdp_cache=pdp_cache,
+                )
+                handler.scrape(url)
+            except Exception as e:
+                logging.error(f"[{label.upper()}] Error on {url}: {e}")
+            finally:
+                try:
+                    page.close()
+                except Exception:
+                    pass
+
         with sync_playwright() as p:
             browser = p.chromium.launch(headless=True)
             context = browser.new_context(**context_kwargs)
-            page = context.new_page()
 
-            for tag, url in tasks:
-                handler_class = self.handler_map.get(tag)
-                if handler_class:
-                    logging.info(f"[{label.upper()}] {tag} -> {url}")
-                    handler = handler_class(page, self.db, viewport=label, run_id=run_id)
+            with ThreadPoolExecutor(max_workers=MAX_URL_WORKERS) as url_pool:
+                futures = {
+                    url_pool.submit(_scrape_one_url, tag, url, context): (tag, url)
+                    for tag, url in tasks
+                }
+                for future in as_completed(futures):
+                    tag, url = futures[future]
                     try:
-                        handler.scrape(url)
+                        future.result()
                     except Exception as e:
-                        logging.error(f"[{label.upper()}] Error on {url}: {e}")
-                else:
-                    logging.warning(f"No handler for tag: [{tag}]")
+                        logging.error(f"[{label.upper()}] Unhandled error for {url}: {e}")
 
             browser.close()
         logging.info(f"[{label.upper()}] Scrape pass complete")
@@ -520,6 +601,12 @@ class ScraperEngine:
         start_time = datetime.now()
         url_list = [url for _, url in tasks]
 
+        # One shared PDP cache for the entire run.
+        # Both viewport threads see the same cache so a PDP verified by desktop
+        # is NOT automatically reused for mobile (different viewport = different result),
+        # but PDPs appearing on multiple listing pages within the same viewport ARE cached.
+        pdp_cache = PdpCache()
+
         # Resolve the iPhone XR device descriptor before entering threads
         # (p.devices must be read inside a sync_playwright() context)
         with sync_playwright() as p:
@@ -530,11 +617,12 @@ class ScraperEngine:
             ("mobile",  mobile_kwargs),
         ]
 
-        # Run desktop and mobile passes in parallel — ~2x faster
-        logging.info("Starting parallel scrape (desktop + mobile)...")
+        # Run desktop and mobile passes in parallel — ~2x faster.
+        # Within each viewport, individual URLs are also scraped in parallel (see _run_viewport).
+        logging.info("Starting parallel scrape (desktop + mobile, URLs in parallel per viewport)...")
         with ThreadPoolExecutor(max_workers=2) as pool:
             futures = {
-                pool.submit(self._run_viewport, tasks, label, kwargs, run_id): label
+                pool.submit(self._run_viewport, tasks, label, kwargs, run_id, pdp_cache): label
                 for label, kwargs in viewport_configs
             }
             for future in as_completed(futures):
@@ -543,6 +631,8 @@ class ScraperEngine:
                     future.result()
                 except Exception as e:
                     logging.error(f"[{label.upper()}] Pass failed with unhandled error: {e}")
+
+        logging.info(f"PDP cache size at end of run: {pdp_cache.size()} unique PDP-viewport pairs")
 
         # Validation runs after both passes are done
         logging.info("")
