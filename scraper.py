@@ -498,10 +498,10 @@ class StreamHandler(BasePageHandler):
         self.page.goto(url, wait_until="domcontentloaded")
         time.sleep(3)
 
-        # Identify Class Tabs (Class 8, Class 9, etc.)
+        # Identify Class Tabs (Class 8, Class 9, Class 12+, etc.)
         # Important: restrict to <button> only — bare <div> matches decorative class-grid
         # elements on pages like aiot-register, creating phantom tab loops.
-        tab_loc = self.page.locator('button').filter(has_text=re.compile(r'^Class \d+$'))
+        tab_loc = self.page.locator('button').filter(has_text=re.compile(r'^Class \d+\+?$'))
         tab_count = tab_loc.count()
         tabs_info = []
         for i in range(tab_count):
