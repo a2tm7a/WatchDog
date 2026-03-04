@@ -294,7 +294,7 @@ class BasePageHandler(ABC):
             self.page.wait_for_timeout(1000)
 
             cta_status = "Not Found"
-            cta_keywords = ["enroll now", "enrol now", "buy now", "select batch"]
+            cta_keywords = ["enroll now", "enrol now", "buy now", "select batch", "select phase"]
             buttons = self.page.locator('button, a, input[type="button"], input[type="submit"]').all()
             for btn in buttons:
                 try:
