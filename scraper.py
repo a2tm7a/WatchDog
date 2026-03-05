@@ -48,6 +48,40 @@ logging.basicConfig(
 
 STEALTH = Stealth()
 
+def _env_bool(name: str, default: bool = False) -> bool:
+    val = os.getenv(name)
+    if val is None:
+        return default
+    return val.strip().lower() in ("1", "true", "yes", "y", "on")
+
+def _env_int(name: str, default: int) -> int:
+    val = os.getenv(name)
+    if val is None or val == "":
+        return default
+    try:
+        parsed = int(val)
+        return parsed if parsed > 0 else default
+    except ValueError:
+        logging.warning(f"Invalid int for {name}={val!r}; using default {default}.")
+        return default
+
+def _env_str(name: str, default: str | None = None) -> str | None:
+    val = os.getenv(name)
+    return val if val not in (None, "") else default
+
+CI_ENV = _env_bool("CI", False)
+WATCHDOG_WAIT_MS = _env_int("WATCHDOG_WAIT_MS", 15000)
+WATCHDOG_RETRIES = _env_int("WATCHDOG_RETRIES", 1)
+WATCHDOG_RETRY_BACKOFF_MS = _env_int("WATCHDOG_RETRY_BACKOFF_MS", 2000)
+_max_workers_default = 1 if (CI_ENV and os.getenv("WATCHDOG_MAX_WORKERS") is None) else 2
+WATCHDOG_MAX_WORKERS = _env_int("WATCHDOG_MAX_WORKERS", _max_workers_default)
+WATCHDOG_CI_SERIAL_VIEWPORTS = _env_bool("WATCHDOG_CI_SERIAL_VIEWPORTS", False)
+WATCHDOG_FAIL_ON_EMPTY = _env_bool("WATCHDOG_FAIL_ON_EMPTY", False)
+WATCHDOG_ARTIFACT_DIR = _env_str("WATCHDOG_ARTIFACT_DIR", "artifacts/watchdog")
+WATCHDOG_HOME_API_RE = _env_str("WATCHDOG_HOME_API_RE")
+WATCHDOG_PLP_API_RE = _env_str("WATCHDOG_PLP_API_RE")
+WATCHDOG_STREAM_API_RE = _env_str("WATCHDOG_STREAM_API_RE")
+
 class DatabaseManager:
     def __init__(self, db_name="scraped_data.db"):
         self.db_name = db_name
@@ -201,6 +235,91 @@ class BasePageHandler(ABC):
         self.viewport = viewport  # 'desktop' | 'mobile'
         self.run_id = run_id
         self.pdp_cache = pdp_cache  # shared, thread-safe PDP result cache
+        self.processed_keys = set()
+        self._console_logs: list[str] = []
+        try:
+            self.page.on("console", self._on_console)
+        except Exception:
+            pass
+
+    def _on_console(self, msg):
+        try:
+            self._console_logs.append(f"{msg.type}: {msg.text}")
+        except Exception:
+            pass
+
+    def _capture_artifacts(self, handler_name: str, url: str, reason: str):
+        try:
+            os.makedirs(WATCHDOG_ARTIFACT_DIR, exist_ok=True)
+        except Exception:
+            return
+
+        ts = datetime.utcnow().strftime("%Y%m%d_%H%M%S_%f")
+        base = f"{self.viewport}_{handler_name}_{ts}"
+        html_path = os.path.join(WATCHDOG_ARTIFACT_DIR, f"{base}.html")
+        png_path = os.path.join(WATCHDOG_ARTIFACT_DIR, f"{base}.png")
+        log_path = os.path.join(WATCHDOG_ARTIFACT_DIR, f"{base}.log")
+
+        try:
+            content = self.page.content()
+            with open(html_path, "w", encoding="utf-8") as f:
+                f.write(content)
+        except Exception:
+            pass
+
+        try:
+            self.page.screenshot(path=png_path, full_page=True)
+        except Exception:
+            pass
+
+        try:
+            with open(log_path, "w", encoding="utf-8") as f:
+                f.write(f"reason={reason}\n")
+                f.write(f"url={url}\n")
+                for line in self._console_logs:
+                    f.write(line + "\n")
+        except Exception:
+            pass
+
+    def _wait_for_api(self, api_re: str | None, timeout_ms: int) -> bool:
+        if not api_re:
+            return False
+        try:
+            pattern = re.compile(api_re)
+        except re.error:
+            logging.warning(f"Invalid WATCHDOG API regex: {api_re!r}")
+            return False
+        try:
+            self.page.wait_for_response(lambda resp: pattern.search(resp.url), timeout=timeout_ms)
+            return True
+        except Exception:
+            return False
+
+    def wait_for_cards(self, selector: str, url: str, handler_name: str, api_re: str | None = None) -> bool:
+        for attempt in range(WATCHDOG_RETRIES + 1):
+            if api_re:
+                self._wait_for_api(api_re, WATCHDOG_WAIT_MS)
+            try:
+                self.page.wait_for_selector(selector, timeout=WATCHDOG_WAIT_MS)
+                return True
+            except Exception:
+                if attempt < WATCHDOG_RETRIES:
+                    logging.warning(
+                        f"{handler_name}: Cards not found after {WATCHDOG_WAIT_MS}ms on {url}. "
+                        f"Retry {attempt + 1}/{WATCHDOG_RETRIES}."
+                    )
+                    try:
+                        self.page.reload(wait_until="domcontentloaded")
+                    except Exception:
+                        pass
+                    time.sleep(WATCHDOG_RETRY_BACKOFF_MS / 1000.0)
+                else:
+                    logging.warning(
+                        f"{handler_name}: Cards not found after {WATCHDOG_WAIT_MS}ms on {url}. "
+                        "Page may not have rendered fully (possible bot-detection)."
+                    )
+                    self._capture_artifacts(handler_name, url, "cards_not_found")
+                    return False
         self.processed_keys = set()
 
     def clean_price(self, price_str):
@@ -375,13 +494,12 @@ class HomepageHandler(BasePageHandler):
         # networkidle is too slow (can take 60s+ if background tracking pixels stay open)
         # Instead, load the DOM and wait explicitly for the course cards to appear.
         self.page.goto(url, wait_until="domcontentloaded")
-
-        try:
-            # Wait up to 15s for the actual course cards to render from the API
-            self.page.wait_for_selector('div.rounded-normal.flex.flex-col', timeout=15000)
-        except Exception:
-            logging.warning(f"HomepageHandler: Cards not found after 15s on {url}. "
-                            "Page may not have rendered fully (possible bot-detection).")
+        self.wait_for_cards(
+            'div.rounded-normal.flex.flex-col',
+            url,
+            "HomepageHandler",
+            api_re=WATCHDOG_HOME_API_RE,
+        )
 
         time.sleep(2)  # allow SPA animations / delayed content to settle
 
@@ -401,6 +519,8 @@ class HomepageHandler(BasePageHandler):
 
             # Homepage cards are div-based
             cards = self.page.locator('div.rounded-normal.flex.flex-col')
+            if cards.count() == 0 and WATCHDOG_FAIL_ON_EMPTY:
+                raise RuntimeError(f"HomepageHandler: No cards found on {url}")
             scraped_batch = []
             
             for i in range(cards.count()):
@@ -450,16 +570,12 @@ class PLPHandler(BasePageHandler):
     def scrape(self, url):
         logging.debug(f"PLPHandler: {url}")
         self.page.goto(url, wait_until="domcontentloaded")
-
-        try:
-            # Wait up to 15s for the first course card to render from the API.
-            # A bare time.sleep(3) is unreliable on CI (slow network + headless).
-            self.page.wait_for_selector('li[data-testid^="card-"]', timeout=15000)
-        except Exception:
-            logging.warning(
-                f"PLPHandler: No cards found after 15s on {url}. "
-                "Page may not have rendered fully (possible bot-detection or empty page)."
-            )
+        self.wait_for_cards(
+            'li[data-testid^="card-"]',
+            url,
+            "PLPHandler",
+            api_re=WATCHDOG_PLP_API_RE,
+        )
 
         time.sleep(1)  # short buffer for SPA to settle after cards appear
 
@@ -484,6 +600,8 @@ class PLPHandler(BasePageHandler):
 
             # Details page cards are li-based
             cards = self.page.locator('li[data-testid^="card-"]')
+            if cards.count() == 0 and WATCHDOG_FAIL_ON_EMPTY:
+                raise RuntimeError(f"PLPHandler: No cards found on {url}")
             scraped_batch = []
 
             for i in range(cards.count()):
@@ -533,17 +651,12 @@ class StreamHandler(BasePageHandler):
     def scrape(self, url):
         logging.debug(f"StreamHandler: {url}")
         self.page.goto(url, wait_until="domcontentloaded")
-
-        try:
-            # Wait up to 15s for at least one course card li to appear.
-            # Stream pages load cards via a client-side fetch; without this wait
-            # the handler would scan an empty DOM on slow CI networks.
-            self.page.wait_for_selector('li[data-testid^="card-"]', timeout=15000)
-        except Exception:
-            logging.warning(
-                f"StreamHandler: No cards found after 15s on {url}. "
-                "Page may be empty, blocked, or not yet rendered."
-            )
+        self.wait_for_cards(
+            'li[data-testid^="card-"]',
+            url,
+            "StreamHandler",
+            api_re=WATCHDOG_STREAM_API_RE,
+        )
 
         time.sleep(1)  # short buffer for SPA animations to settle
 
@@ -571,6 +684,8 @@ class StreamHandler(BasePageHandler):
 
             # Stream page cards: searching for li with p (title) and h3 (price)
             cards = self.page.locator('li').filter(has=self.page.locator('p')).filter(has=self.page.locator('h3'))
+            if cards.count() == 0 and WATCHDOG_FAIL_ON_EMPTY:
+                raise RuntimeError(f"StreamHandler: No cards found on {url}")
             scraped_batch = []
 
             for i in range(cards.count()):
@@ -653,7 +768,7 @@ class ScraperEngine:
         progress = ProgressTracker(len(tasks), label)
         logging.info(f"[{label.upper()}] ▶  Starting — {len(tasks)} URLs")
 
-        MAX_URL_WORKERS = 2
+        MAX_URL_WORKERS = max(1, WATCHDOG_MAX_WORKERS)
         task_chunks = [tasks[i::MAX_URL_WORKERS] for i in range(MAX_URL_WORKERS)]
         task_chunks = [chunk for chunk in task_chunks if chunk]
         if not task_chunks:
@@ -801,20 +916,28 @@ class ScraperEngine:
             ("mobile",  mobile_kwargs),
         ]
 
-        # Run desktop and mobile passes in parallel — ~2x faster.
-        # Within each viewport, individual URLs are also scraped in parallel (see _run_viewport).
-        logging.info("Starting parallel scrape (desktop + mobile, URLs in parallel per viewport)...")
-        with ThreadPoolExecutor(max_workers=2) as pool:
-            futures = {
-                pool.submit(self._run_viewport, tasks, label, kwargs, run_id, pdp_cache): label
-                for label, kwargs in viewport_configs
-            }
-            for future in as_completed(futures):
-                label = futures[future]
+        if WATCHDOG_CI_SERIAL_VIEWPORTS:
+            logging.info("Starting serial scrape (desktop then mobile)...")
+            for label, kwargs in viewport_configs:
                 try:
-                    future.result()
+                    self._run_viewport(tasks, label, kwargs, run_id, pdp_cache)
                 except Exception as e:
                     logging.error(f"[{label.upper()}] Pass failed with unhandled error: {e}")
+        else:
+            # Run desktop and mobile passes in parallel — ~2x faster.
+            # Within each viewport, individual URLs are also scraped in parallel (see _run_viewport).
+            logging.info("Starting parallel scrape (desktop + mobile, URLs in parallel per viewport)...")
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                futures = {
+                    pool.submit(self._run_viewport, tasks, label, kwargs, run_id, pdp_cache): label
+                    for label, kwargs in viewport_configs
+                }
+                for future in as_completed(futures):
+                    label = futures[future]
+                    try:
+                        future.result()
+                    except Exception as e:
+                        logging.error(f"[{label.upper()}] Pass failed with unhandled error: {e}")
 
         logging.info(f"PDP cache size at end of run: {pdp_cache.size()} unique PDP-viewport pairs")
 

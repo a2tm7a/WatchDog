@@ -1,4 +1,5 @@
 scraped_data.db
+artifacts/watchdog/
 dump.html
 debug*
 scraper.log
@@ -9,3 +10,5 @@ __pycache__/
 reports/report_*.md
 # Email credentials — never commit
 email_config.json
+scraper.log
+scraped_data.db

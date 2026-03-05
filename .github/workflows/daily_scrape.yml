@@ -31,8 +31,8 @@ jobs:
 
       # ── 4. Chromium + OS libs ──────────────────────────────────────
       # --with-deps installs the system libraries Chromium needs on Ubuntu
-      - name: Install Playwright Chromium
-        run: playwright install chromium --with-deps
+      - name: Install Playwright Chromium + WebKit
+        run: playwright install chromium webkit --with-deps
 
       # ── 5. Scrape ──────────────────────────────────────────────────
       - name: Run scraper
@@ -40,6 +40,12 @@ jobs:
           EMAIL_USERNAME: ${{ secrets.EMAIL_USERNAME }}
           EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
           EMAIL_TO:       ${{ secrets.EMAIL_TO }}
+          WATCHDOG_WAIT_MS: "45000"
+          WATCHDOG_RETRIES: "2"
+          WATCHDOG_MAX_WORKERS: "1"
+          WATCHDOG_CI_SERIAL_VIEWPORTS: "true"
+          WATCHDOG_FAIL_ON_EMPTY: "false"
+          WATCHDOG_ARTIFACT_DIR: "artifacts/watchdog"
           # Optional overrides (add as Secrets if you need them):
           # EMAIL_FROM:    ${{ secrets.EMAIL_FROM }}
           # EMAIL_SEND_ON: errors          # always | errors | never
@@ -52,4 +58,13 @@ jobs:
         with:
           name: report-${{ github.run_number }}
           path: reports/
+          retention-days: 30
+
+      - name: Upload debug artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: watchdog-artifacts-${{ github.run_number }}
+          path: artifacts/watchdog/
+          if-no-files-found: warn
           retention-days: 30
