@@ -656,7 +656,11 @@ class ScraperEngine:
         logging.info(f"[{label.upper()}] ▶  Starting — {len(tasks)} URLs")
 
         # Number of concurrent URL workers per viewport.
-        MAX_URL_WORKERS = 4
+        # Kept at 2 (not 4) to avoid triggering burst-based bot detection:
+        # 4 workers × 2 viewports = 8 simultaneous Playwright sessions all
+        # hitting the same site within milliseconds — a strong bot signal on
+        # peak-traffic hours when WAF rules are most aggressive.
+        MAX_URL_WORKERS = 2
 
         def _scrape_one_url(tag: str, url: str):
             """Worker: own playwright session → own browser → own page."""

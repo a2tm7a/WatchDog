@@ -2,8 +2,10 @@ name: Daily Scraper & Verification
 
 on:
   schedule:
-    # Runs at 02:30 UTC = 08:00 IST every day
-    - cron: '30 2 * * *'
+    # Runs at 20:30 UTC = 02:00 AM IST every day (off-peak — avoids
+    # allen.in's peak 8-10 AM IST traffic window when bot protection is
+    # most aggressive and scraping is more likely to be rate-limited).
+    - cron: '30 20 * * *'
   workflow_dispatch:     # also allows manual trigger from the GitHub UI
 
 jobs:
