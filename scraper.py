@@ -30,7 +30,7 @@ from abc import ABC, abstractmethod
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from playwright.sync_api import sync_playwright
-from playwright_stealth import stealth_sync
+from playwright_stealth import stealth
 from validation_service import ValidationService
 from report_generator import ReportGenerator
 from email_service import EmailService
@@ -694,7 +694,7 @@ class ScraperEngine:
 
                     # Apply comprehensive anti-bot stealth measures (WebGL, 
                     # navigator.webdriver, vendor, hairline, etc.)
-                    stealth_sync(page)
+                    stealth(page) if "stealth_sync" in globals() else stealth(page)
 
                     handler = handler_class(
                         page, self.db,
