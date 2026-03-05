@@ -30,6 +30,7 @@ from abc import ABC, abstractmethod
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from playwright.sync_api import sync_playwright
+from stealth import stealth_sync
 from validation_service import ValidationService
 from report_generator import ReportGenerator
 from email_service import EmailService
@@ -690,12 +691,11 @@ class ScraperEngine:
                 try:
                     context = browser.new_context(**context_kwargs)
                     page = context.new_page()
-                    # Override the most-checked bot signal: navigator.webdriver.
-                    # Playwright sets this to true by default; injecting before
-                    # any page script runs means sites never see the sentinel value.
-                    page.add_init_script(
-                        "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"
-                    )
+
+                    # Apply comprehensive anti-bot stealth measures (WebGL, 
+                    # navigator.webdriver, vendor, hairline, etc.)
+                    stealth_sync(page)
+
                     handler = handler_class(
                         page, self.db,
                         viewport=label,
