@@ -10,6 +10,7 @@ import logging
 from datetime import datetime
 from typing import List, Optional
 from validation_service import ValidationService
+from constants import SEVERITY_ICONS, SEVERITY_ORDER
 
 
 REPORTS_DIR = "reports"
@@ -179,9 +180,9 @@ class ReportGenerator:
             "| Severity | Count |",
             "|----------|------:|",
         ]
-        for sev in ["CRITICAL", "HIGH", "MEDIUM", "LOW"]:
+        for sev in SEVERITY_ORDER:
             count = by_severity.get(sev, 0)
-            icon = {"CRITICAL": "🔴", "HIGH": "🟠", "MEDIUM": "🟡", "LOW": "🟢"}.get(sev, "")
+            icon = SEVERITY_ICONS.get(sev, "")
             lines.append(f"| {icon} {sev} | {count} |")
 
         return "\n".join(lines)

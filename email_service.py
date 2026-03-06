@@ -32,6 +32,7 @@ from email.mime.base import MIMEBase
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from typing import Optional
+from constants import SEVERITY_ICONS, SEVERITY_ORDER
 
 CONFIG_FILE = os.path.join(os.path.dirname(__file__), "email_config.json")
 
@@ -203,7 +204,7 @@ class EmailService:
         run_id: Optional[int],
         start_time: Optional[datetime],
     ) -> str:
-        severity_icons = {"CRITICAL": "🔴", "HIGH": "🟠", "MEDIUM": "🟡", "LOW": "🟢"}
+        severity_icons = SEVERITY_ICONS
         timestamp = (start_time or datetime.now()).strftime("%Y-%m-%d %H:%M:%S")
         banner_color = "#d9534f" if total > 0 else "#5cb85c"
         banner_text = f"⚠️ {total} issue{'s' if total != 1 else ''} found" if total > 0 else "✅ All checks passed"
@@ -215,7 +216,7 @@ class EmailService:
 
         by_sev_rows = "".join(
             f"<tr><td>{severity_icons.get(s, '')} {s}</td><td style='text-align:right'><b>{by_severity.get(s, 0)}</b></td></tr>"
-            for s in ["CRITICAL", "HIGH", "MEDIUM", "LOW"]
+            for s in SEVERITY_ORDER
             if by_severity.get(s, 0) > 0
         ) or "<tr><td colspan='2'>None</td></tr>"
 

@@ -11,7 +11,7 @@ Covers:
 """
 import logging
 import pytest
-from scraper import DatabaseManager
+from database import DatabaseManager
 from validation_service import ValidationService
 
 

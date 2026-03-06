@@ -11,7 +11,7 @@ Covers:
 """
 import sqlite3
 import pytest
-from scraper import DatabaseManager
+from database import DatabaseManager
 
 
 # ---------------------------------------------------------------------------

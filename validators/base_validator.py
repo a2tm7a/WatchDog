@@ -52,12 +52,13 @@ class BaseValidator(ABC):
         """
         issues = self._validate(course_data)
         
-        # Auto-inject viewport and base_url into all issues
+        # Auto-inject viewport and base_url into all issues.
+        # course_data is the authoritative source — always overwrite the
+        # dataclass defaults so the correct viewport is stamped on every result.
         viewport = course_data.get('viewport', 'desktop')
         base_url = course_data.get('base_url', 'Unknown')
         for issue in issues:
-            if not hasattr(issue, 'viewport') or issue.viewport == 'desktop':
-                issue.viewport = viewport
+            issue.viewport = viewport
             issue.base_url = base_url
             
         # Chain to next validator

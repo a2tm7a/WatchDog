@@ -9,7 +9,8 @@ Covers:
 import threading
 import pytest
 from unittest.mock import MagicMock
-from scraper import PdpCache, ProgressTracker, BasePageHandler
+from cache import PdpCache, ProgressTracker
+from handlers import BasePageHandler
 
 
 # ---------------------------------------------------------------------------
