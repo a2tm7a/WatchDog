@@ -1,2 +1,4 @@
 playwright
 playwright-stealth
+pytest
+pytest-cov
