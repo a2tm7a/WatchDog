@@ -11,7 +11,7 @@ on:
 jobs:
   scrape:
     runs-on: ubuntu-latest
-    timeout-minutes: 120   # scraper ~30-40 min locally; 2h is a safe ceiling
+    timeout-minutes: 60    # optimised run targets ~20-30 min; 60 min is a safe ceiling
 
     steps:
       # ── 1. Checkout ────────────────────────────────────────────────
@@ -30,9 +30,10 @@ jobs:
         run: pip install -r requirements.txt
 
       # ── 4. Chromium + OS libs ──────────────────────────────────────
-      # --with-deps installs the system libraries Chromium needs on Ubuntu
-      - name: Install Playwright Chromium + WebKit
-        run: playwright install chromium webkit --with-deps
+      # Only install Chromium; WebKit is a rarely-needed fallback and
+      # downloading it adds ~2-3 min of unnecessary setup time.
+      - name: Install Playwright Chromium
+        run: playwright install chromium --with-deps
 
       # ── 5. Scrape ──────────────────────────────────────────────────
       - name: Run scraper
@@ -40,10 +41,10 @@ jobs:
           EMAIL_USERNAME: ${{ secrets.EMAIL_USERNAME }}
           EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
           EMAIL_TO:       ${{ secrets.EMAIL_TO }}
-          WATCHDOG_WAIT_MS: "45000"
-          WATCHDOG_RETRIES: "2"
-          WATCHDOG_MAX_WORKERS: "1"
-          WATCHDOG_CI_SERIAL_VIEWPORTS: "true"
+          WATCHDOG_WAIT_MS: "20000"
+          WATCHDOG_RETRIES: "1"
+          WATCHDOG_MAX_WORKERS: "3"
+          WATCHDOG_CI_SERIAL_VIEWPORTS: "false"
           WATCHDOG_FAIL_ON_EMPTY: "false"
           WATCHDOG_ARTIFACT_DIR: "artifacts/watchdog"
           # Optional overrides (add as Secrets if you need them):
