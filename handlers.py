@@ -23,10 +23,12 @@ WATCHDOG_ARTIFACT_DIR         Where to save HTML/PNG/log artifacts (default arti
 WATCHDOG_HOME_API_RE          Regex to await a network response before home-page scrape.
 WATCHDOG_PLP_API_RE           Regex to await a network response before PLP scrape.
 WATCHDOG_STREAM_API_RE        Regex to await a network response before stream-page scrape.
+WATCHDOG_NAV_JITTER_MS        Random pre-request delay ceiling in ms (default 0 = disabled).
 """
 
 import os
 import re
+import random
 import logging
 import time
 from abc import ABC, abstractmethod
@@ -80,6 +82,7 @@ WATCHDOG_MAX_WORKERS          = _env_int("WATCHDOG_MAX_WORKERS", _max_workers_de
 WATCHDOG_CI_SERIAL_VIEWPORTS  = _env_bool("WATCHDOG_CI_SERIAL_VIEWPORTS", False)
 WATCHDOG_FAIL_ON_EMPTY        = _env_bool("WATCHDOG_FAIL_ON_EMPTY", False)
 WATCHDOG_ARTIFACT_DIR         = _env_str("WATCHDOG_ARTIFACT_DIR", "artifacts/watchdog")
+WATCHDOG_NAV_JITTER_MS        = _env_int("WATCHDOG_NAV_JITTER_MS", 0)
 WATCHDOG_HOME_API_RE          = _env_str("WATCHDOG_HOME_API_RE")
 WATCHDOG_PLP_API_RE           = _env_str("WATCHDOG_PLP_API_RE")
 WATCHDOG_STREAM_API_RE        = _env_str("WATCHDOG_STREAM_API_RE")
@@ -167,6 +170,52 @@ class BasePageHandler(ABC):
             return True
         except Exception:
             return False
+
+    def _is_cloudfront_403(self) -> bool:
+        """Returns True if the current page is a CloudFront 403 block page."""
+        try:
+            content = self.page.content()
+            return (
+                "The request could not be satisfied" in content
+                and "cloudfront" in content.lower()
+            )
+        except Exception:
+            return False
+
+    def _navigate(self, url: str, wait_until: str = "domcontentloaded", timeout: int = 30000) -> bool:
+        """Navigate to url with 403-aware exponential backoff retry.
+
+        Detects both HTTP-level 403 responses and CloudFront HTML error pages.
+        Returns True on success, False if all retries are exhausted.
+        """
+        base_backoff = WATCHDOG_RETRY_BACKOFF_MS / 1000.0
+        for attempt in range(WATCHDOG_RETRIES + 1):
+            response = None
+            try:
+                response = self.page.goto(url, wait_until=wait_until, timeout=timeout)
+            except Exception as e:
+                logging.warning(f"  _navigate: goto exception on {url}: {e}")
+
+            is_403 = (response is not None and response.status == 403) or self._is_cloudfront_403()
+
+            if not is_403:
+                return True
+
+            wait_s = base_backoff * (2 ** attempt) + random.uniform(0, 3)
+            if attempt < WATCHDOG_RETRIES:
+                logging.warning(
+                    f"  _navigate: CloudFront 403 on {url} "
+                    f"(attempt {attempt + 1}/{WATCHDOG_RETRIES + 1}). "
+                    f"Waiting {wait_s:.1f}s before retry."
+                )
+                time.sleep(wait_s)
+            else:
+                logging.warning(
+                    f"  _navigate: Persistent 403 on {url} after {WATCHDOG_RETRIES + 1} attempts."
+                )
+                self._capture_artifacts("navigate_403", url, "cloudfront_403")
+                return False
+        return False
 
     def wait_for_cards(
         self, selector: str, url: str, handler_name: str, api_re: str | None = None
@@ -273,7 +322,8 @@ class BasePageHandler(ABC):
 
         try:
             logging.debug(f"  → PDP: {pdp_url}")
-            self.page.goto(pdp_url, wait_until="domcontentloaded", timeout=30000)
+            if not self._navigate(pdp_url, timeout=30000):
+                return "Blocked", "Blocked", 1, 0
             time.sleep(2)
 
             is_broken = 1 if self.page.url.strip("/") == original_url.strip("/") else 0
@@ -344,7 +394,7 @@ class BasePageHandler(ABC):
                 except Exception:
                     continue
 
-            self.page.goto(original_url, wait_until="domcontentloaded")
+            self._navigate(original_url)
             result = (pdp_price, cta_status, is_broken, price_mismatch)
 
             if self.pdp_cache is not None:
@@ -355,7 +405,7 @@ class BasePageHandler(ABC):
         except Exception as e:
             logging.warning(f"     PDP verification failed: {e}")
             try:
-                self.page.goto(original_url, wait_until="domcontentloaded")
+                self._navigate(original_url)
             except Exception as nav_err:
                 logging.debug(f"Could not navigate back to {original_url}: {nav_err}")
             return "Error", "Error", 1, 0
@@ -372,7 +422,10 @@ class HomepageHandler(BasePageHandler):
 
     def scrape(self, url):
         logging.debug(f"HomepageHandler: {url}")
-        self.page.goto(url, wait_until="domcontentloaded")
+        if WATCHDOG_NAV_JITTER_MS > 0:
+            time.sleep(random.uniform(0, WATCHDOG_NAV_JITTER_MS / 1000.0))
+        if not self._navigate(url):
+            return
         self.wait_for_cards(
             "div.rounded-normal.flex.flex-col",
             url,
@@ -457,7 +510,10 @@ class PLPHandler(BasePageHandler):
 
     def scrape(self, url):
         logging.debug(f"PLPHandler: {url}")
-        self.page.goto(url, wait_until="domcontentloaded")
+        if WATCHDOG_NAV_JITTER_MS > 0:
+            time.sleep(random.uniform(0, WATCHDOG_NAV_JITTER_MS / 1000.0))
+        if not self._navigate(url):
+            return
         self.wait_for_cards(
             'li[data-testid^="card-"]',
             url,
@@ -544,7 +600,10 @@ class StreamHandler(BasePageHandler):
 
     def scrape(self, url):
         logging.debug(f"StreamHandler: {url}")
-        self.page.goto(url, wait_until="domcontentloaded")
+        if WATCHDOG_NAV_JITTER_MS > 0:
+            time.sleep(random.uniform(0, WATCHDOG_NAV_JITTER_MS / 1000.0))
+        if not self._navigate(url):
+            return
         self.wait_for_cards(
             'li[data-testid^="card-"]',
             url,

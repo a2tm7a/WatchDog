@@ -43,6 +43,8 @@ jobs:
           EMAIL_TO:       ${{ secrets.EMAIL_TO }}
           WATCHDOG_WAIT_MS: "20000"
           WATCHDOG_RETRIES: "1"
+          WATCHDOG_RETRY_BACKOFF_MS: "10000"
+          WATCHDOG_NAV_JITTER_MS: "2000"
           WATCHDOG_MAX_WORKERS: "3"
           WATCHDOG_CI_SERIAL_VIEWPORTS: "false"
           WATCHDOG_FAIL_ON_EMPTY: "false"
