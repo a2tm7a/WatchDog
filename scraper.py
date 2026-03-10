@@ -33,7 +33,6 @@ from handlers import (
     PLPHandler,
     StreamHandler,
     WATCHDOG_MAX_WORKERS,
-    WATCHDOG_CI_SERIAL_VIEWPORTS,
 )
 from validation_service import ValidationService
 from report_generator import ReportGenerator
@@ -240,9 +239,9 @@ class ScraperEngine:
 
         logging.info(
             "Config: WAIT_MS=%s RETRIES=%s BACKOFF_MS=%s MAX_WORKERS=%s "
-            "SERIAL_VIEWPORTS=%s FAIL_ON_EMPTY=%s ARTIFACT_DIR=%s",
+            "FAIL_ON_EMPTY=%s ARTIFACT_DIR=%s",
             WATCHDOG_WAIT_MS, WATCHDOG_RETRIES, WATCHDOG_RETRY_BACKOFF_MS,
-            WATCHDOG_MAX_WORKERS, WATCHDOG_CI_SERIAL_VIEWPORTS,
+            WATCHDOG_MAX_WORKERS,
             WATCHDOG_FAIL_ON_EMPTY, WATCHDOG_ARTIFACT_DIR,
         )
 
@@ -269,31 +268,23 @@ class ScraperEngine:
             ("mobile", mobile_kwargs),
         ]
 
-        if WATCHDOG_CI_SERIAL_VIEWPORTS:
-            logging.info("Starting serial scrape (desktop then mobile)...")
-            for label, kwargs in viewport_configs:
+        logging.info(
+            "Starting parallel scrape "
+            "(desktop + mobile, URLs in parallel per viewport)..."
+        )
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            futures = {
+                pool.submit(
+                    self._run_viewport, tasks, label, kwargs, run_id, pdp_cache
+                ): label
+                for label, kwargs in viewport_configs
+            }
+            for future in as_completed(futures):
+                label = futures[future]
                 try:
-                    self._run_viewport(tasks, label, kwargs, run_id, pdp_cache)
+                    future.result()
                 except Exception as e:
                     logging.error(f"[{label.upper()}] Pass failed: {e}")
-        else:
-            logging.info(
-                "Starting parallel scrape "
-                "(desktop + mobile, URLs in parallel per viewport)..."
-            )
-            with ThreadPoolExecutor(max_workers=2) as pool:
-                futures = {
-                    pool.submit(
-                        self._run_viewport, tasks, label, kwargs, run_id, pdp_cache
-                    ): label
-                    for label, kwargs in viewport_configs
-                }
-                for future in as_completed(futures):
-                    label = futures[future]
-                    try:
-                        future.result()
-                    except Exception as e:
-                        logging.error(f"[{label.upper()}] Pass failed: {e}")
 
         logging.info(
             f"PDP cache size at end of run: "

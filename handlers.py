@@ -13,11 +13,10 @@ StreamHandler     — Scrapes class-tab based Olympiad / Results pages.
 
 Environment variables
 ---------------------
-WATCHDOG_WAIT_MS              Timeout for waiting on card selectors (default 15000 ms).
+WATCHDOG_WAIT_MS              Timeout for waiting on card selectors (default 10000 ms).
 WATCHDOG_RETRIES              Retry count if cards don't appear (default 1).
 WATCHDOG_RETRY_BACKOFF_MS     Sleep between retries (default 2000 ms).
-WATCHDOG_MAX_WORKERS          URL-level concurrency per viewport (default 2; 1 in CI).
-WATCHDOG_CI_SERIAL_VIEWPORTS  Run desktop then mobile serially in CI (default false).
+WATCHDOG_MAX_WORKERS          URL-level concurrency per viewport (default 4).
 WATCHDOG_FAIL_ON_EMPTY        Raise on empty card lists instead of warning (default false).
 WATCHDOG_ARTIFACT_DIR         Where to save HTML/PNG/log artifacts (default artifacts/watchdog).
 WATCHDOG_HOME_API_RE          Regex to await a network response before home-page scrape.
@@ -72,20 +71,16 @@ def _env_str(name: str, default: str | None = None) -> str | None:
 # Runtime configuration (read once at import time from environment)
 # ---------------------------------------------------------------------------
 
-CI_ENV                    = _env_bool("CI", False)
-WATCHDOG_WAIT_MS          = _env_int("WATCHDOG_WAIT_MS", 15000)
+WATCHDOG_WAIT_MS          = _env_int("WATCHDOG_WAIT_MS", 10000)
 WATCHDOG_RETRIES          = _env_int("WATCHDOG_RETRIES", 1)
 WATCHDOG_RETRY_BACKOFF_MS = _env_int("WATCHDOG_RETRY_BACKOFF_MS", 2000)
-
-_max_workers_default = 1 if (CI_ENV and os.getenv("WATCHDOG_MAX_WORKERS") is None) else 2
-WATCHDOG_MAX_WORKERS          = _env_int("WATCHDOG_MAX_WORKERS", _max_workers_default)
-WATCHDOG_CI_SERIAL_VIEWPORTS  = _env_bool("WATCHDOG_CI_SERIAL_VIEWPORTS", False)
-WATCHDOG_FAIL_ON_EMPTY        = _env_bool("WATCHDOG_FAIL_ON_EMPTY", False)
-WATCHDOG_ARTIFACT_DIR         = _env_str("WATCHDOG_ARTIFACT_DIR", "artifacts/watchdog")
-WATCHDOG_NAV_JITTER_MS        = _env_int("WATCHDOG_NAV_JITTER_MS", 0)
-WATCHDOG_HOME_API_RE          = _env_str("WATCHDOG_HOME_API_RE")
-WATCHDOG_PLP_API_RE           = _env_str("WATCHDOG_PLP_API_RE")
-WATCHDOG_STREAM_API_RE        = _env_str("WATCHDOG_STREAM_API_RE")
+WATCHDOG_MAX_WORKERS      = _env_int("WATCHDOG_MAX_WORKERS", 4)
+WATCHDOG_FAIL_ON_EMPTY    = _env_bool("WATCHDOG_FAIL_ON_EMPTY", False)
+WATCHDOG_ARTIFACT_DIR     = _env_str("WATCHDOG_ARTIFACT_DIR", "artifacts/watchdog")
+WATCHDOG_NAV_JITTER_MS    = _env_int("WATCHDOG_NAV_JITTER_MS", 0)
+WATCHDOG_HOME_API_RE      = _env_str("WATCHDOG_HOME_API_RE")
+WATCHDOG_PLP_API_RE       = _env_str("WATCHDOG_PLP_API_RE")
+WATCHDOG_STREAM_API_RE    = _env_str("WATCHDOG_STREAM_API_RE")
 
 
 # ---------------------------------------------------------------------------
