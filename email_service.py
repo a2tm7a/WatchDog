@@ -95,7 +95,7 @@ class EmailService:
                 logging.warning(f"Could not load email config: {e}")
 
         # 2. Override / supplement with environment variables.
-        #    This is the primary mechanism for CI (GitHub Actions Secrets).
+        #    Environment variables can override/supplement the JSON config.
         #    Any env var present takes precedence over the JSON value.
         #
         #    Required env vars:

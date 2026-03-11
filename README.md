@@ -10,15 +10,16 @@ WatchDog crawls every course card across the Homepage, PLP (Product Listing Page
 
 1. [Features](#features)
 2. [Quick Start](#quick-start)
-3. [Configuration](#configuration)
-4. [Architecture](#architecture)
-5. [Design Patterns](#design-patterns)
-6. [Data Model](#data-model)
-7. [Validation Rules](#validation-rules)
-8. [Reports & Alerts](#reports--alerts)
-9. [Adding a New Validator](#adding-a-new-validator)
-10. [Adding a New Page Handler](#adding-a-new-page-handler)
-11. [Backlog & Roadmap](#backlog--roadmap)
+3. [Scheduled Runs (Claude Code)](#scheduled-runs-claude-code)
+4. [Configuration](#configuration)
+5. [Architecture](#architecture)
+6. [Design Patterns](#design-patterns)
+7. [Data Model](#data-model)
+8. [Validation Rules](#validation-rules)
+9. [Reports & Alerts](#reports--alerts)
+10. [Adding a New Validator](#adding-a-new-validator)
+11. [Adding a New Page Handler](#adding-a-new-page-handler)
+12. [Backlog & Roadmap](#backlog--roadmap)
 
 ---
 
@@ -51,14 +52,32 @@ playwright install chromium
 # 3. Run a full scrape + validate cycle
 python3 scraper.py
 
-# 4. (Optional) Run the validator unit tests
-python3 test_validators.py
+# 4. (Optional) Run the unit tests
+python3 -m pytest
 ```
 
 > **Tip:** Pass a custom URL file as an argument:
 > ```bash
 > python3 scraper.py my_urls.txt
 > ```
+
+---
+
+## Scheduled Runs (Claude Code)
+
+WatchDog runs automatically via a **Claude Code scheduled task** — no CI/CD pipeline needed. The task is configured to execute daily at **2:00 AM** local time.
+
+To run manually at any time:
+
+```bash
+python3 scraper.py
+```
+
+The scheduled task (`watchdog-daily-scrape`) will:
+1. Verify Playwright browsers are installed
+2. Run the scraper
+3. Summarize results (courses scraped, issues found, duration)
+4. Highlight any CRITICAL or HIGH severity issues
 
 ---
 
@@ -115,17 +134,24 @@ Copy `email_config.example.json` and fill in your credentials:
 | `"errors"` | Send only when issues are found *(default)* |
 | `"never"` | Disable email entirely |
 
-**CI / GitHub Actions** — set secrets instead of committing the file:
+> **Note:** Environment variables (`EMAIL_USERNAME`, `EMAIL_PASSWORD`, `EMAIL_TO`,
+> `EMAIL_HOST`, `EMAIL_PORT`, `EMAIL_SEND_ON`, `EMAIL_ENABLED`) can override
+> `email_config.json` values if set in your shell profile. This is useful if you
+> prefer not to store credentials in a JSON file.
 
-| Secret | Purpose |
-|--------|---------|
-| `EMAIL_USERNAME` | SMTP login |
-| `EMAIL_PASSWORD` | App password |
-| `EMAIL_TO` | Comma-separated recipients |
-| `EMAIL_HOST` | SMTP host *(default: smtp.gmail.com)* |
-| `EMAIL_PORT` | SMTP port *(default: 587)* |
-| `EMAIL_SEND_ON` | `always` / `errors` / `never` |
-| `EMAIL_ENABLED` | `true` / `false` |
+### Runtime Tuning (Environment Variables)
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `WATCHDOG_MAX_WORKERS` | `4` | URL-level concurrency per viewport |
+| `WATCHDOG_WAIT_MS` | `10000` | Timeout for card selector (ms) |
+| `WATCHDOG_RETRIES` | `1` | Retry count if cards don't appear |
+| `WATCHDOG_RETRY_BACKOFF_MS` | `2000` | Sleep between retries (ms) |
+| `WATCHDOG_NAV_JITTER_MS` | `0` | Random pre-request delay ceiling (ms) |
+| `WATCHDOG_FAIL_ON_EMPTY` | `false` | Raise on empty card lists |
+| `WATCHDOG_ARTIFACT_DIR` | `artifacts/watchdog` | Debug artifact path |
+
+Desktop and mobile viewports always run in parallel (2 viewport threads, each with up to `WATCHDOG_MAX_WORKERS` browser instances).
 
 ---
 
@@ -354,6 +380,7 @@ self.handler_map = {
 - [x] Per-run SQLite tracking (`run_id`)
 - [x] Email alert notifications
 - [x] Markdown report generation with per-URL error summary
+- [x] Local Claude Code scheduled task for daily execution (replaced GitHub Actions)
 
 ### Pending 🔲
 
