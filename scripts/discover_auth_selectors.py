@@ -74,40 +74,109 @@ def _dump_page_state(page: Page, label: str) -> None:
 
 
 def _try_click_signin(page: Page) -> bool:
-    """Try every likely sign-in trigger until one produces a visible form."""
+    """
+    Try every likely sign-in trigger until one produces a visible input form.
 
-    # Broad list of candidate selectors for a "Sign in" nav button/link
-    candidates = [
-        "a:has-text('Sign In')",
-        "a:has-text('Sign in')",
-        "a:has-text('Login')",
-        "a:has-text('Log In')",
-        "button:has-text('Sign In')",
-        "button:has-text('Sign in')",
-        "button:has-text('Login')",
-        "button:has-text('Log In')",
+    allen.in has a user/login icon on the top-right corner of the nav bar —
+    not a text "Sign In" link. We target icon buttons via aria-label, title,
+    class patterns, and position (rightmost button in the header).
+    """
+
+    # ── Pass 1: icon / aria / data-attribute selectors ──────────────────────
+    icon_candidates = [
+        # aria-label matches (most reliable)
+        "[aria-label*='login' i]",
+        "[aria-label*='sign in' i]",
+        "[aria-label*='signin' i]",
+        "[aria-label*='account' i]",
+        "[aria-label*='user' i]",
+        "[aria-label*='profile' i]",
+        # title attribute
+        "[title*='login' i]",
+        "[title*='sign in' i]",
+        "[title*='account' i]",
+        # data-testid
         "[data-testid*='login']",
         "[data-testid*='signin']",
-        "[class*='login']",
-        "[class*='signin']",
-        "[class*='sign-in']",
+        "[data-testid*='user']",
+        "[data-testid*='account']",
+        # class-name heuristics
+        "button[class*='login']",
+        "button[class*='signin']",
+        "button[class*='sign-in']",
+        "button[class*='user']",
+        "button[class*='account']",
+        "a[class*='login']",
+        "a[class*='signin']",
+        # svg icon wrapper buttons in header/nav
+        "header button svg",
+        "nav button svg",
+        # text-based fallbacks
+        "a:has-text('Sign In')",
+        "a:has-text('Login')",
+        "button:has-text('Sign In')",
+        "button:has-text('Login')",
         "header a[href*='sign']",
-        "nav a[href*='login']",
+        "header a[href*='login']",
     ]
 
-    for sel in candidates:
+    for sel in icon_candidates:
         try:
             els = page.query_selector_all(sel)
             if els:
+                # For SVG hits, walk up to the clickable parent button/a
+                el = els[0]
+                tag = el.evaluate("el => el.tagName.toLowerCase()")
+                if tag == "svg":
+                    el = el.evaluate_handle(
+                        "el => el.closest('button, a') || el.parentElement"
+                    ).as_element()
+                    if not el:
+                        continue
+
                 print(f"  → Clicking: {sel!r}  (found {len(els)} match(es))")
-                els[0].click()
-                # Wait for a visible input to appear (modal opening)
-                page.wait_for_selector("input[type='password'], input[type='tel'], input[type='email']",
-                                       timeout=5_000)
+                el.click()
+                page.wait_for_selector(
+                    "input[type='password'], input[type='tel'], input[type='email'], input[type='text']",
+                    timeout=5_000,
+                )
                 print("  → Login form appeared!")
                 return True
         except Exception:
             pass
+
+    # ── Pass 2: rightmost button/link in the header ──────────────────────────
+    # allen.in puts the login icon at the far right of the nav
+    print("  → Trying rightmost header buttons...")
+    try:
+        header_btns = page.query_selector_all("header button, header a[href]")
+        if header_btns:
+            # Sort by bounding box x-position, pick the rightmost
+            with_pos = []
+            for btn in header_btns:
+                try:
+                    box = btn.bounding_box()
+                    if box:
+                        with_pos.append((box["x"] + box["width"], btn))
+                except Exception:
+                    pass
+            with_pos.sort(key=lambda t: t[0], reverse=True)
+            for _, btn in with_pos[:5]:
+                text = btn.inner_text()[:40].strip()
+                aria = btn.get_attribute("aria-label") or ""
+                print(f"    Trying rightmost element: text={text!r}  aria={aria!r}")
+                try:
+                    btn.click()
+                    page.wait_for_selector(
+                        "input[type='password'], input[type='tel'], input[type='email'], input[type='text']",
+                        timeout=4_000,
+                    )
+                    print("  → Login form appeared (rightmost header button)!")
+                    return True
+                except Exception:
+                    pass
+    except Exception as e:
+        print(f"  → Rightmost-button pass failed: {e}")
 
     return False
 
