@@ -61,6 +61,7 @@ class EmailService:
         validation_summary: dict,
         run_id: Optional[int] = None,
         start_time: Optional[datetime] = None,
+        profile: Optional[str] = None,
     ) -> bool:
         """
         Send the report email if the configuration requires it.
@@ -71,7 +72,7 @@ class EmailService:
             return False
 
         try:
-            msg = self._build_message(report_path, validation_summary, run_id, start_time)
+            msg = self._build_message(report_path, validation_summary, run_id, start_time, profile)
             self._smtp_send(msg)
             recipients = self.config.get("to", [])
             logging.info(f"📧 Report email sent to: {', '.join(recipients)}")
@@ -204,6 +205,7 @@ class EmailService:
         summary: dict,
         run_id: Optional[int],
         start_time: Optional[datetime],
+        profile: Optional[str] = None,
     ) -> MIMEMultipart:
         total = summary.get("total_issues", 0)
         by_type = summary.get("by_type", {})
@@ -211,12 +213,11 @@ class EmailService:
         recipients = self.config.get("to", [])
         sender = self.config.get("from", "WatchDog")
 
-        timestamp = (start_time or datetime.now()).strftime("%Y-%m-%d %H:%M")
-        subject = (
-            f"⚠️ [{timestamp}] WatchDog — {total} issue{'s' if total != 1 else ''} found"
-            if total > 0
-            else f"✅ [{timestamp}] WatchDog — All checks passed"
-        )
+        timestamp = (start_time or datetime.now()).strftime("%Y-%m-%d")
+
+        # Build subject with profile if authenticated
+        profile_suffix = f" [Auth: {profile}]" if profile else ""
+        subject = f"WatchDog Report — {timestamp}{profile_suffix}"
 
         msg = MIMEMultipart("alternative")
         msg["Subject"] = subject

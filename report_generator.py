@@ -35,6 +35,8 @@ class ReportGenerator:
         urls_scraped: List[str],
         run_id: Optional[int] = None,
         recheck_stats: Optional[dict] = None,
+        mode: str = "guest",
+        profile: Optional[str] = None,
     ):
         self.vs = validation_service
         self.db_name = db_name
@@ -44,6 +46,8 @@ class ReportGenerator:
         self.run_id = run_id
         # recheck_stats keys: first_pass_issues, final_pass_issues, cleared_on_recheck
         self.recheck_stats = recheck_stats or {}
+        self.mode = mode
+        self.profile = profile
 
     # ------------------------------------------------------------------
     # Public API
@@ -52,7 +56,14 @@ class ReportGenerator:
     def save(self) -> str:
         """Generate the report and save it to reports/. Returns the file path."""
         os.makedirs(REPORTS_DIR, exist_ok=True)
-        filename = self.start_time.strftime("report_%Y-%m-%d_%H-%M-%S.md")
+
+        # Build filename with mode/profile context
+        base_name = self.start_time.strftime("report_%Y-%m-%d_%H-%M-%S")
+        if self.mode == "authenticated" and self.profile:
+            suffix = f"auth_{self.profile}"
+        else:
+            suffix = "guest"
+        filename = f"{base_name}_{suffix}.md"
         filepath = os.path.join(REPORTS_DIR, filename)
 
         content = self._build_report()
@@ -122,6 +133,12 @@ class ReportGenerator:
         return "\n".join(lines)
 
     def _section_header(self, duration_str: str) -> str:
+        # Build the Mode row
+        if self.mode == "authenticated" and self.profile:
+            mode_str = f"Authenticated — {self.profile}"
+        else:
+            mode_str = "Guest"
+
         lines = [
             f"# WatchDog Run Report",
             f"",
@@ -129,6 +146,7 @@ class ReportGenerator:
             f"|---|---|",
             f"| **Date** | {self.start_time.strftime('%Y-%m-%d %H:%M:%S')} |",
             f"| **Duration** | {duration_str} |",
+            f"| **Mode** | {mode_str} |",
             f"| **URLs Scraped** | {len(self.urls_scraped)} |",
             f"| **Viewports** | Desktop (1920×1080), Mobile — iPhone XR (390×844) |",
         ]
