@@ -25,3 +25,7 @@ CTA_KEYWORDS = [
     "select batch",
     "select phase",
 ]
+
+# Valid check type strings produced by validators.
+# Must stay in sync with ValidationResult.type values across all validators.
+KNOWN_CHECK_TYPES: frozenset = frozenset({"CTA_BROKEN", "CTA_MISSING", "PRICE_MISMATCH"})
