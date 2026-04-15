@@ -46,6 +46,7 @@ from handlers import (  # type: ignore[import]
     WATCHDOG_ARTIFACT_DIR,
 )
 from validation_service import ValidationService  # type: ignore[import]
+from check_config import CheckConfig  # type: ignore[import]
 from report_generator import ReportGenerator      # type: ignore[import]
 from email_service import EmailService            # type: ignore[import]
 from auth_session import AuthSession              # type: ignore[import]
@@ -414,8 +415,9 @@ class ScraperEngine:
 
         logging.info("")
         logging.info("Running validation checks across all viewports...")
+        check_config = CheckConfig.load("config/url_checks.yaml")
         validator = ValidationService(self.db.db_name)
-        first_pass_issues = validator.validate_all_courses(run_id=run_id)
+        first_pass_issues = validator.validate_all_courses(run_id=run_id, check_config=check_config)
         first_pass_count  = len(first_pass_issues)
         validator.log_results()
 
@@ -437,7 +439,7 @@ class ScraperEngine:
         logging.info("")
         logging.info("[RECHECK] Running final validation after re-check pass...")
         final_validator = ValidationService(self.db.db_name)
-        final_pass_issues = final_validator.validate_all_courses(run_id=run_id)
+        final_pass_issues = final_validator.validate_all_courses(run_id=run_id, check_config=check_config)
         final_pass_count  = len(final_pass_issues)
         final_validator.log_results()
 
