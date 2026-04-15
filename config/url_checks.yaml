@@ -1,0 +1,42 @@
+version: 1
+
+# Checks enabled for any URL not explicitly listed in the urls section below.
+# Remove a check name here to disable it globally across all unlisted URLs.
+defaults:
+  enabled:
+    - CTA_BROKEN
+    - CTA_MISSING
+    - PRICE_MISMATCH
+
+# Per-URL overrides — replaces defaults entirely for that URL.
+# Use when a page type makes a check inapplicable (avoid false positives).
+urls:
+  # --- Results pages ---
+  # These pages display past-result alumni cards, not purchasable course cards.
+  # CTA_MISSING and PRICE_MISMATCH would fire as false positives here.
+  https://allen.in/neet/result-2025:
+    enabled: [CTA_BROKEN]
+  https://allen.in/neet/results-2024:
+    enabled: [CTA_BROKEN]
+  https://allen.in/neet/results-2023:
+    enabled: [CTA_BROKEN]
+  https://allen.in/neet/results-2022:
+    enabled: [CTA_BROKEN]
+  https://allen.in/jee/results-2026:
+    enabled: [CTA_BROKEN]
+  https://allen.in/jee/results-2025:
+    enabled: [CTA_BROKEN]
+  https://allen.in/jee/results-2024:
+    enabled: [CTA_BROKEN]
+  https://allen.in/jee/results-2023:
+    enabled: [CTA_BROKEN]
+  https://allen.in/jee/results-2022:
+    enabled: [CTA_BROKEN]
+  https://allen.in/classes-6-10/results:
+    enabled: [CTA_BROKEN]
+
+  # --- Registration page ---
+  # No course cards with prices on this page; CTA_MISSING and PRICE_MISMATCH
+  # do not apply.
+  https://allen.in/aiot-register:
+    enabled: [CTA_BROKEN]
