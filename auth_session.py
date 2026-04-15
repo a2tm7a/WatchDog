@@ -47,31 +47,34 @@ BASE_URL = "https://allen.in"
 # Step 1: Nav "Login" button that opens the modal
 NAV_LOGIN_BUTTON = "button[data-testid='loginCtaButton']"
 
-# Step 3 (login drawer): "Continue with Form ID" — scope clicks to login_drawer_locator().
-FORM_ID_FLOW_BUTTON = (
-    "button[data-testid='FormIdLoginButtonWeb'], "
-    "button[data-testid*='FormIdLogin'], "
-    "button:has-text('Continue with Form ID'), "
-    "button:has-text('Continue with form ID'), "
-    "button:has-text('Form ID')"
-)
-
 # Headless allen.in can be slow; 8s was too tight for modal paint + hydration.
 _AUTH_MODAL_OPEN_MS = int(os.environ.get("WATCHDOG_AUTH_MODAL_MS", "25000"))
 
-# Step 3–5: Fields inside the login modal (scoped via login_modal_locator in login()).
-# Avoid bare `input[type='text']:visible` — it matches marketing fields outside the modal.
-FORM_ID_INPUT_INNER = (
-    "input[name='formId'], input#formId, "
-    "input[placeholder*='Form ID'], input[placeholder*='form id'], input[placeholder*='Form Id']"
+# Poll for a *visible* "Continue with Form ID" (duplicate DOM nodes are often hidden).
+_FORM_ID_FLOW_MS = int(os.environ.get("WATCHDOG_FORM_ID_FLOW_MS", "10000"))
+_FORM_ID_FLOW_POLL_S = 0.1
+
+# Poll for visible credential fields after the Form ID method transition.
+_CRED_FIELD_MS = int(os.environ.get("WATCHDOG_CRED_FIELD_MS", "18000"))
+_CRED_FIELD_POLL_S = 0.12
+
+# Step 4–6: credential fields — use login_credentials_panel_locator() after Form ID click.
+FORM_ID_FIELD_SELECTORS: tuple[str, ...] = (
+    "input[name='formId']",
+    "input#formId",
+    "input[placeholder*='Form ID']",
+    "input[placeholder*='form id']",
+    "input[placeholder*='Form Id']",
 )
 PASSWORD_INNER = "input[type='password']"
-SUBMIT_INNER = "button[type='submit'], button:has-text('Login'), button:has-text('Sign In')"
+SUBMIT_BUTTON_SELECTORS: tuple[str, ...] = (
+    "button[type='submit']",
+    "button:has-text('Login')",
+    "button:has-text('Sign In')",
+)
 
-# Legacy export name (same as inner; login always prefers modal scope first).
-FORM_ID_INPUT = FORM_ID_INPUT_INNER
-PASSWORD_SELECTOR = PASSWORD_INNER
-SUBMIT_SELECTOR = SUBMIT_INNER
+# Dialog must contain at least one of these to count as the credentials panel.
+_CREDENTIAL_FIELD_HAS = ", ".join(FORM_ID_FIELD_SELECTORS + (PASSWORD_INNER,))
 
 # Optional UI signals that logged-in chrome is present (see AUTH_UI_FLOW.md).
 LOGGED_IN_POSITIVE_SELECTORS: tuple[str, ...] = (
@@ -110,6 +113,14 @@ PROFILE_SWITCH_BASE_URL = "https://allen.in"
 POST_LOAD_LATE_POPUP_SEC = 12.0
 
 
+def _form_id_flow_budget_ms() -> int:
+    return int(os.environ.get("WATCHDOG_FORM_ID_FLOW_MS", str(_FORM_ID_FLOW_MS)))
+
+
+def _cred_field_budget_ms() -> int:
+    return int(os.environ.get("WATCHDOG_CRED_FIELD_MS", str(_CRED_FIELD_MS)))
+
+
 def _goto_spa_no_networkidle(page: Page, url: str) -> None:
     """
     Open *url* without wait_until=networkidle.
@@ -124,6 +135,18 @@ def _goto_spa_no_networkidle(page: Page, url: str) -> None:
     except Exception:
         pass
     time.sleep(0.4)
+
+
+def _visible_dialog_or_body(page: Page, timeout_ms: int) -> Locator:
+    """First visible [role=dialog], else full page (last resort for scoped locators)."""
+    any_dlg = page.locator('[role="dialog"]')
+    if any_dlg.count() > 0:
+        try:
+            any_dlg.first.wait_for(state="visible", timeout=timeout_ms)
+            return any_dlg.first
+        except Exception:
+            pass
+    return page.locator("body")
 
 
 def _dismiss_optional_overlays(page: Page) -> None:
@@ -200,14 +223,51 @@ def login_drawer_locator(page: Page) -> Locator:
             return drawer.first
         except Exception:
             pass
-    any_dlg = page.locator('[role="dialog"]')
-    if any_dlg.count() > 0:
-        try:
-            any_dlg.first.wait_for(state="visible", timeout=min(12_000, _AUTH_MODAL_OPEN_MS))
-            return any_dlg.first
-        except Exception:
-            pass
-    return page.locator("body")
+    return _visible_dialog_or_body(page, min(12_000, _AUTH_MODAL_OPEN_MS))
+
+
+def click_visible_form_id_flow_button(scope: Locator) -> None:
+    """
+    Click the first *visible* and *enabled* Continue-with-Form-ID control inside
+    *scope*. allen.in keeps duplicate ``FormIdLoginButtonWeb`` nodes (e.g. mobile
+    vs desktop); ``.first`` often resolves to a hidden one, so a single long
+    ``wait_for(visible)`` can time out. We poll with ``WATCHDOG_FORM_ID_FLOW_MS``
+    (default 10s) and short slices instead.
+    """
+    budget_ms = _form_id_flow_budget_ms()
+    deadline = time.time() + budget_ms / 1000.0
+    primary = scope.locator('button[data-testid="FormIdLoginButtonWeb"]')
+    by_label = scope.get_by_role(
+        "button",
+        name=re.compile(r"continue\s+with\s+form\s*id", re.I),
+    )
+
+    while time.time() < deadline:
+        for loc in (primary, by_label):
+            try:
+                n = loc.count()
+            except Exception:
+                n = 0
+            for i in range(min(n, 10)):
+                cell = loc.nth(i)
+                try:
+                    if not cell.is_visible():
+                        continue
+                    try:
+                        if not cell.is_enabled():
+                            continue
+                    except Exception:
+                        pass
+                    cell.click(timeout=5_000)
+                    return
+                except Exception:
+                    continue
+        time.sleep(_FORM_ID_FLOW_POLL_S)
+
+    raise RuntimeError(
+        f"[AUTH] No visible, enabled Continue-with-Form-ID control within {budget_ms}ms "
+        "(duplicate hidden nodes are common — increase WATCHDOG_FORM_ID_FLOW_MS if needed)."
+    )
 
 
 def _auth_ui_snapshot(page: Page) -> dict[str, Any]:
@@ -232,31 +292,82 @@ def _auth_ui_snapshot(page: Page) -> dict[str, Any]:
         return {"error": str(exc)}
 
 
-def login_modal_locator(page: Page) -> Locator:
+def login_credentials_panel_locator(page: Page) -> Locator:
     """
-    Prefer a visible [role="dialog"] that contains auth controls.
-    Falls back to first visible dialog, then body (legacy — narrow field selectors only).
+    After "Continue with Form ID", the method-picker button may unmount. Resolve the
+    dialog that **contains credential inputs** so we do not fall back to ``body``
+    and fill the wrong field (e.g. homepage FullName).
     """
-    filtered = page.locator('[role="dialog"]').filter(
-        has=page.locator(
-            "button[data-testid='FormIdLoginButtonWeb'], button[data-testid*='FormIdLogin'], "
-            "input[name='formId'], input[type='password']"
-        )
+    dlg = page.locator('[role="dialog"]').filter(has=page.locator(_CREDENTIAL_FIELD_HAS))
+    if dlg.count() > 0:
+        try:
+            dlg.first.wait_for(state="visible", timeout=min(15_000, _AUTH_MODAL_OPEN_MS))
+            return dlg.first
+        except Exception:
+            pass
+    return _visible_dialog_or_body(page, 5_000)
+
+
+def fill_first_visible_in_scope(
+    scope: Locator,
+    selectors: tuple[str, ...],
+    value: str,
+    *,
+    what: str = "field",
+) -> None:
+    """Fill the first matching *visible* control (skip hidden duplicates)."""
+    budget_ms = _cred_field_budget_ms()
+    deadline = time.time() + budget_ms / 1000.0
+    while time.time() < deadline:
+        for sel in selectors:
+            loc = scope.locator(sel)
+            try:
+                n = loc.count()
+            except Exception:
+                n = 0
+            for i in range(min(n, 10)):
+                cell = loc.nth(i)
+                try:
+                    if not cell.is_visible():
+                        continue
+                    try:
+                        if not cell.is_enabled():
+                            continue
+                    except Exception:
+                        pass
+                    cell.fill(value, timeout=5_000)
+                    return
+                except Exception:
+                    continue
+        time.sleep(_CRED_FIELD_POLL_S)
+    raise RuntimeError(
+        f"[AUTH] No visible, enabled {what} matched within {budget_ms}ms: {selectors!r}"
     )
-    if filtered.count() > 0:
-        try:
-            filtered.first.wait_for(state="visible", timeout=10_000)
-            return filtered.first
-        except Exception:
-            pass
-    any_dlg = page.locator('[role="dialog"]')
-    if any_dlg.count() > 0:
-        try:
-            any_dlg.first.wait_for(state="visible", timeout=5_000)
-            return any_dlg.first
-        except Exception:
-            pass
-    return page.locator("body")
+
+
+def click_first_visible_submit_in_scope(scope: Locator) -> None:
+    budget_ms = _cred_field_budget_ms()
+    deadline = time.time() + budget_ms / 1000.0
+    while time.time() < deadline:
+        for sel in SUBMIT_BUTTON_SELECTORS:
+            loc = scope.locator(sel)
+            try:
+                n = loc.count()
+            except Exception:
+                n = 0
+            for i in range(min(n, 8)):
+                cell = loc.nth(i)
+                try:
+                    if not cell.is_visible() or not cell.is_enabled():
+                        continue
+                    cell.click(timeout=5_000)
+                    return
+                except Exception:
+                    continue
+        time.sleep(_CRED_FIELD_POLL_S)
+    raise RuntimeError(
+        f"[AUTH] No visible, enabled submit control within {budget_ms}ms: {SUBMIT_BUTTON_SELECTORS!r}"
+    )
 
 
 def _auth_debug_screenshot(page: Page, tag: str) -> None:
@@ -393,75 +504,46 @@ class AuthSession:
                 logging.info("[AUTH] Nav Login button clicked.")
                 self._auth_trace(attempt, last_step)
 
-                # Optional: dialog shell (not all builds use role=dialog).
-                last_step = "wait_dialog_shell"
-                try:
-                    self.page.locator('[role="dialog"]').first.wait_for(
-                        state="visible", timeout=min(12_000, _AUTH_MODAL_OPEN_MS)
-                    )
-                except Exception:
-                    pass
-                self._auth_trace(attempt, last_step)
-
                 last_step = "wait_login_drawer"
                 login_drawer = login_drawer_locator(self.page)
                 self._auth_trace(attempt, last_step)
 
-                last_step = "wait_form_id_flow"
-                # Explicit label match inside the login drawer (case-insensitive).
-                form_id_by_role = login_drawer.get_by_role(
-                    "button",
-                    name=re.compile(r"continue\s+with\s+form\s*id", re.I),
-                )
-                form_id_flow_loc = login_drawer.locator(FORM_ID_FLOW_BUTTON)
-                try:
-                    try:
-                        form_id_by_role.first.wait_for(
-                            state="visible", timeout=min(8_000, _AUTH_MODAL_OPEN_MS)
-                        )
-                    except Exception:
-                        pass
-                    if form_id_by_role.count() > 0 and form_id_by_role.first.is_visible():
-                        form_id_flow_loc = form_id_by_role
-                    else:
-                        form_id_flow_loc.first.wait_for(
-                            state="visible", timeout=_AUTH_MODAL_OPEN_MS
-                        )
-                except Exception as wait_exc:
-                    n = form_id_flow_loc.count()
-                    logging.warning(
-                        "[AUTH] Form ID flow control not visible in login drawer (matches=%s): %s",
-                        n,
-                        wait_exc,
-                    )
-                    raise
-                logging.info("[AUTH] Login drawer open; Continue with Form ID control visible.")
-
-                # Step 3 — click "Continue with Form ID" inside the login drawer
+                # Step 3 — first *visible* + *enabled* Continue-with-Form-ID (skip hidden duplicates).
                 last_step = "click_form_id_flow"
-                form_id_flow_loc.first.click(timeout=15_000)
+                logging.info(
+                    "[AUTH] Polling for visible Continue-with-Form-ID (budget=%sms)…",
+                    _form_id_flow_budget_ms(),
+                )
+                click_visible_form_id_flow_button(login_drawer)
                 time.sleep(0.5)  # allow form transition animation
-                logging.info("[AUTH] Form ID flow selected.")
+                logging.info("[AUTH] Form ID flow selected (visible Continue-with-Form-ID clicked).")
                 self._auth_trace(attempt, last_step)
 
-                # Step 4–6 — fill inside modal scope (falls back to body + narrow selectors).
-                last_step = "resolve_modal_scope"
-                scope = login_modal_locator(self.page)
+                # Step 4–6 — credential panel (picker controls may have unmounted).
+                last_step = "resolve_credentials_panel"
+                time.sleep(0.35)
+                scope = login_credentials_panel_locator(self.page)
                 self._auth_trace(attempt, last_step)
 
                 last_step = "fill_form_id"
-                scope.locator(FORM_ID_INPUT_INNER).first.fill(
-                    self._creds["form_id"], timeout=15_000
+                fill_first_visible_in_scope(
+                    scope,
+                    FORM_ID_FIELD_SELECTORS,
+                    self._creds["form_id"],
+                    what="form id field",
                 )
 
                 last_step = "fill_password"
-                time.sleep(0.3)
-                scope.locator(PASSWORD_INNER).first.fill(
-                    self._creds["password"], timeout=15_000
+                time.sleep(0.2)
+                fill_first_visible_in_scope(
+                    scope,
+                    (PASSWORD_INNER,),
+                    self._creds["password"],
+                    what="password field",
                 )
 
                 last_step = "submit"
-                scope.locator(SUBMIT_INNER).first.click(timeout=15_000)
+                click_first_visible_submit_in_scope(scope)
                 try:
                     self.page.wait_for_load_state("load", timeout=30_000)
                 except Exception:

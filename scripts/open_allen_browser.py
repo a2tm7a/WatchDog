@@ -10,6 +10,10 @@ dismisses common overlays, clicks Login, then waits until you press Enter.
 Optional URL:
 
   WATCHDOG_DEBUG_URL=https://allen.in/neet python3 scripts/open_allen_browser.py
+
+Viewport (default 1440×900, MacBook Air–class):
+
+  WATCHDOG_HEADED_VIEWPORT_WIDTH=1280 WATCHDOG_HEADED_VIEWPORT_HEIGHT=800 python3 scripts/open_allen_browser.py
 """
 
 import os
@@ -25,14 +29,18 @@ from auth_session import POST_LOAD_LATE_POPUP_SEC, _dismiss_optional_overlays
 
 STEALTH = Stealth()
 URL = os.environ.get("WATCHDOG_DEBUG_URL", "https://allen.in")
+_HEADED_VIEWPORT_W = int(os.environ.get("WATCHDOG_HEADED_VIEWPORT_WIDTH", "1440"))
+_HEADED_VIEWPORT_H = int(os.environ.get("WATCHDOG_HEADED_VIEWPORT_HEIGHT", "900"))
 
 
 def main() -> None:
-    print(f"Opening {URL} (headed, stealth on)…")
+    print(
+        f"Opening {URL} (headed, stealth on, viewport {_HEADED_VIEWPORT_W}×{_HEADED_VIEWPORT_H})…"
+    )
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=False)
         context = browser.new_context(
-            viewport={"width": 1400, "height": 900},
+            viewport={"width": _HEADED_VIEWPORT_W, "height": _HEADED_VIEWPORT_H},
             locale="en-IN",
         )
         STEALTH.apply_stealth_sync(context)

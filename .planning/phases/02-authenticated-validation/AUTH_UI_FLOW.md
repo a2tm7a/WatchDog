@@ -13,9 +13,9 @@ Single source of truth for what WatchDog **assumes** about the site, how that ma
 | 0 | Homepage loaded | (none) | `allen.in` / SPA shell | `_goto_spa_no_networkidle`, post-load sleep, `_dismiss_optional_overlays` |
 | 1 | Homepage with nav | Optional promos dismissed | Nav visible | Waits + overlay handling |
 | 2 | Login modal closed | Click **Login** (`loginCtaButton`) | Modal opens | Click `NAV_LOGIN_BUTTON` |
-| 3 | Modal — method picker | Click **Continue with Form ID** (inside login drawer only) | Form ID + password fields | `login_drawer_locator` → `get_by_role` / `FORM_ID_FLOW_BUTTON` scoped to drawer |
-| 4 | Modal — credentials | Enter Form ID + password | Fields filled | Scoped fills inside `[role="dialog"]` when present |
-| 5 | Modal — submit | Submit | Navigation or SPA update | `SUBMIT_INNER` + `wait_for_load_state` |
+| 3 | Modal — method picker | Click **Continue with Form ID** (inside login drawer only) | Form ID + password fields | `login_drawer_locator` → poll visible `FormIdLoginButtonWeb` / role name |
+| 4 | Modal — credentials | Enter Form ID + password | Fields filled | `login_credentials_panel_locator` (dialog that **has** form/password inputs — not the picker dialog) + **visible-first** fill |
+| 5 | Modal — submit | Submit | Navigation or SPA update | `click_first_visible_submit_in_scope` + `wait_for_load_state` |
 | 6 | Logged in | (none) | Nav **Login** CTA hidden; optional profile / Log out UI | `_is_logged_in`: nav hidden + optional positive selectors |
 
 Update this table after each major allen.in UI change (copy DevTools `data-testid` and labels into **Visible primary actions**).
@@ -40,6 +40,8 @@ Update this table after each major allen.in UI change (copy DevTools `data-testi
 | `WATCHDOG_AUTH_DEBUG=1` | On login exception, write `reports/auth-debug-<step>-<timestamp>.png` |
 | `WATCHDOG_AUTH_STRICT_SUCCESS=1` | `_is_logged_in` requires a **positive** indicator (profile / Log out text), not only “nav Login hidden” |
 | `WATCHDOG_AUTH_MODAL_MS` | Max wait (ms) for Form ID entry control after opening modal (default 25000) |
+| `WATCHDOG_FORM_ID_FLOW_MS` | Poll budget (ms) to find a **visible** Continue-with-Form-ID button and click it (default 10000); avoids waiting on a hidden duplicate |
+| `WATCHDOG_CRED_FIELD_MS` | Poll budget (ms) for **visible** form-id / password / submit controls after the method picker (default 18000) |
 
 ---
 

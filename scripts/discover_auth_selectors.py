@@ -18,6 +18,9 @@ or `test_credentials.json` (see `test_credentials.example.json`).
 
 Navigation uses domcontentloaded+load (not networkidle). Override ms if needed:
     WATCHDOG_GOTO_TIMEOUT_MS=90000 python3 scripts/discover_auth_selectors.py
+
+Headed window size (~13" MacBook Air content area, default 1440×900):
+    WATCHDOG_HEADED_VIEWPORT_WIDTH=1280 WATCHDOG_HEADED_VIEWPORT_HEIGHT=800 HEADLESS=0 ...
 """
 
 import os
@@ -30,20 +33,24 @@ from playwright.sync_api import sync_playwright, Page
 from playwright_stealth import Stealth
 
 from auth_session import (
-    FORM_ID_FLOW_BUTTON,
-    FORM_ID_INPUT_INNER,
+    FORM_ID_FIELD_SELECTORS,
     PASSWORD_INNER,
     POST_LOAD_LATE_POPUP_SEC,
-    SUBMIT_INNER,
     _dismiss_optional_overlays,
     _load_credentials,
+    click_first_visible_submit_in_scope,
+    click_visible_form_id_flow_button,
+    fill_first_visible_in_scope,
+    login_credentials_panel_locator,
     login_drawer_locator,
-    login_modal_locator,
 )
 
 STEALTH   = Stealth()
 HEADLESS  = os.environ.get("HEADLESS", "1") != "0"
 BASE_URL  = "https://allen.in"
+# Headed browser: MacBook Air–class viewport (not full 1080p — avoids tiny UI on large monitors).
+_HEADED_VIEWPORT_W = int(os.environ.get("WATCHDOG_HEADED_VIEWPORT_WIDTH", "1440"))
+_HEADED_VIEWPORT_H = int(os.environ.get("WATCHDOG_HEADED_VIEWPORT_HEIGHT", "900"))
 # allen.in keeps long-lived connections; networkidle often never fires.
 DEFAULT_GOTO_TIMEOUT_MS = 60_000
 
@@ -277,12 +284,14 @@ def main() -> None:
         sys.exit(1)
 
     print(f"Headless: {HEADLESS}")
+    if not HEADLESS:
+        print(f"Viewport: {_HEADED_VIEWPORT_W}×{_HEADED_VIEWPORT_H} (set WATCHDOG_HEADED_VIEWPORT_* to override)")
     print(f"Credentials: form_id={creds['form_id'][:4]}***")
 
     with sync_playwright() as pw:
         browser = pw.chromium.launch(headless=HEADLESS)
         context = browser.new_context(
-            viewport={"width": 1920, "height": 1080},
+            viewport={"width": _HEADED_VIEWPORT_W, "height": _HEADED_VIEWPORT_H},
             user_agent=(
                 "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
                 "AppleWebKit/537.36 (KHTML, like Gecko) "
@@ -317,67 +326,58 @@ def main() -> None:
         # Login drawer = dialog that contains the method picker (scoped like AuthSession.login).
         login_drawer = login_drawer_locator(page)
 
-        # Wait for "Continue with Form ID" control inside the drawer (not global DOM).
-        try:
-            form_id_btn = login_drawer.locator(FORM_ID_FLOW_BUTTON)
-            form_id_btn.first.wait_for(state="visible", timeout=25_000)
-            print("  ✓ Login drawer open — Form ID entry control visible inside drawer")
-        except Exception as e:
-            print(f"  ✗ Login drawer / Form ID control not visible: {e}")
-
-        # Report which modal buttons are now visible (scoped to drawer)
+        # Report which modal buttons are in the drawer (visible vs total — duplicates are common)
         for testid in ["submitOTPButton", "FormIdLoginButtonWeb", "usernameLoginButtonWeb"]:
             loc = login_drawer.locator(f"button[data-testid='{testid}']")
             count = loc.count()
             visible = sum(1 for i in range(count) if loc.nth(i).is_visible())
             print(f"  {testid}: {count} in DOM, {visible} visible (in drawer)")
 
-        # ── Step 3: Click "Continue with Form ID" inside the login drawer ──
-        print("\nStep 3: Clicking Continue with Form ID in login drawer...")
+        # ── Step 3: Click first *visible* "Continue with Form ID" (poll; see WATCHDOG_FORM_ID_FLOW_MS) ──
+        print("\nStep 3: Clicking visible Continue with Form ID in login drawer...")
         try:
-            form_id_btn = login_drawer.locator(FORM_ID_FLOW_BUTTON)
-            form_id_btn.first.wait_for(state="visible", timeout=25_000)
-            form_id_btn.first.click(timeout=15_000)
+            click_visible_form_id_flow_button(login_drawer)
             time.sleep(0.6)  # form transition animation
-            print("  ✓ Clicked Continue with Form ID (drawer-scoped)")
+            print("  ✓ Clicked visible Continue with Form ID (skipped hidden duplicates)")
         except Exception as e:
             print(f"  ✗ Could not click Form ID button in drawer: {e}")
 
         _dump_page_state(page, ">>> After 'Continue with Form ID' — COPY THESE INPUT SELECTORS <<<")
 
-        # ── Step 4: Fill credentials (same modal scope as AuthSession.login) ───
-        print("\nStep 4: Filling Form ID credentials (modal-scoped locators)...")
-        scope = login_modal_locator(page)
+        # ── Step 4: Fill credentials (credentials-panel scope — post picker DOM) ───
+        print("\nStep 4: Filling Form ID credentials (credentials panel + visible-first)...")
+        time.sleep(0.35)
+        scope = login_credentials_panel_locator(page)
         try:
-            fid = scope.locator(FORM_ID_INPUT_INNER)
-            print(f"  Form ID field matches: {fid.count()} (in scope)")
-            fid.first.fill(creds["form_id"], timeout=5_000)
-            print(f"  ✓ Filled form_id via {FORM_ID_INPUT_INNER!r} (scoped)")
+            fill_first_visible_in_scope(
+                scope,
+                FORM_ID_FIELD_SELECTORS,
+                creds["form_id"],
+                what="form id field",
+            )
+            print(f"  ✓ Filled form_id (visible-first among {FORM_ID_FIELD_SELECTORS!r})")
         except Exception as e:
             print(f"  ✗ Could not fill form_id: {e}")
 
-        pass_loc = scope.locator(PASSWORD_INNER)
-        pass_count = pass_loc.count()
-        pass_visible = sum(1 for i in range(pass_count) if pass_loc.nth(i).is_visible())
-        print(f"  Password inputs (scoped): {pass_count} in DOM, {pass_visible} visible")
-        if pass_visible > 0:
-            try:
-                pass_loc.first.fill(creds["password"], timeout=5_000)
-                print("  ✓ Filled password")
-            except Exception as e:
-                print(f"  ✗ Could not fill password: {e}")
-        else:
-            print("  (password field not yet visible — may appear after form_id step)")
-
-        submit_loc = scope.locator(SUBMIT_INNER)
         try:
-            submit_loc.first.click(timeout=5_000)
+            fill_first_visible_in_scope(
+                scope,
+                (PASSWORD_INNER,),
+                creds["password"],
+                what="password field",
+            )
+            print("  ✓ Filled password (first visible)")
+        except Exception as e:
+            print(f"  ✗ Could not fill password: {e}")
+
+        try:
+            click_first_visible_submit_in_scope(scope)
             try:
                 page.wait_for_load_state("load", timeout=25_000)
             except Exception:
                 pass
             time.sleep(1.0)
-            print("  ✓ Submitted")
+            print("  ✓ Submitted (first visible enabled)")
         except Exception as e:
             print(f"  ✗ Could not submit: {e}")
 
