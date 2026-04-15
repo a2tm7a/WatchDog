@@ -26,6 +26,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 from playwright.sync_api import sync_playwright, Page
 from playwright_stealth import Stealth
 
+from auth_session import _dismiss_optional_overlays
+
 STEALTH   = Stealth()
 HEADLESS  = os.environ.get("HEADLESS", "1") != "0"
 BASE_URL  = "https://allen.in"
@@ -46,7 +48,9 @@ def _goto_allen_home(page: Page) -> None:
         page.wait_for_load_state("load", timeout=min(25_000, timeout_ms))
     except Exception:
         pass
-    time.sleep(0.8)
+    # Late promo / survey popups (~3–5s after shell load)
+    time.sleep(4.0)
+    _dismiss_optional_overlays(page)
     try:
         page.locator("button[data-testid='loginCtaButton']").first.wait_for(
             state="visible",

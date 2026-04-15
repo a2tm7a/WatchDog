@@ -2,7 +2,8 @@
 """
 Open allen.in in a normal Chromium window so you can see what the site does.
 
-No discovery steps — load the page, then wait until you press Enter.
+Waits ~4s for the late homepage popup, dismisses common overlays, clicks Login,
+then waits until you press Enter.
 
   python3 scripts/open_allen_browser.py
 
@@ -13,11 +14,14 @@ Optional URL:
 
 import os
 import sys
+import time
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 from playwright.sync_api import sync_playwright
 from playwright_stealth import Stealth
+
+from auth_session import _dismiss_optional_overlays
 
 STEALTH = Stealth()
 URL = os.environ.get("WATCHDOG_DEBUG_URL", "https://allen.in")
@@ -34,13 +38,16 @@ def main() -> None:
         STEALTH.apply_stealth_sync(context)
         page = context.new_page()
         page.goto(URL, wait_until="domcontentloaded", timeout=30_000)
-        print("Navigation finished (domcontentloaded). Use the browser window to debug.")
-        print("When finished, close the window or press Enter here.")
+        print("Navigation finished. Waiting ~4s for delayed popup…")
+        time.sleep(4.0)
+        _dismiss_optional_overlays(page)
+        nav = page.locator("button[data-testid='loginCtaButton']")
+        nav.first.wait_for(state="visible", timeout=10_000)
+        nav.first.click(timeout=10_000)
+        print("Login clicked — inspect the modal. Press Enter here when done.")
         try:
             input()
         except EOFError:
-            import time
-
             print("(no TTY — sleeping 60s then closing)")
             time.sleep(60)
         browser.close()

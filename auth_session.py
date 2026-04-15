@@ -93,6 +93,9 @@ STREAM_SELECTORS: dict[str, str] = {
 # URL to land on before switching profile
 PROFILE_SWITCH_BASE_URL = "https://allen.in"
 
+# Promo / survey layers often appear ~3–5s after first paint; wait before Login.
+POST_LOAD_LATE_POPUP_SEC = 4.0
+
 
 def _goto_spa_no_networkidle(page: Page, url: str) -> None:
     """
@@ -117,6 +120,8 @@ def _dismiss_optional_overlays(page: Page) -> None:
         "button:has-text('Accept all')",
         "button:has-text('I understand')",
         "button:has-text('Agree')",
+        "button:has-text('Not now')",
+        "button:has-text('Maybe later')",
         "[aria-label='Close']",
         "button[aria-label='Close']",
     )
@@ -208,6 +213,11 @@ class AuthSession:
             try:
                 # Step 1 — land on homepage (avoid networkidle — see _goto_spa_no_networkidle)
                 _goto_spa_no_networkidle(self.page, BASE_URL)
+                logging.info(
+                    "[AUTH] Waiting %.1fs for late homepage popup…",
+                    POST_LOAD_LATE_POPUP_SEC,
+                )
+                time.sleep(POST_LOAD_LATE_POPUP_SEC)
                 _dismiss_optional_overlays(self.page)
 
                 if attempt > 1:
