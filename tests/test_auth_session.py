@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from auth_session import AuthSession
+from auth import AuthSession
 
 
 @pytest.fixture
@@ -16,7 +16,7 @@ def session_with_mock_page():
     mock_page.is_closed.return_value = False
     mock_ctx.new_page.return_value = mock_page
 
-    with patch("auth_session._load_credentials", return_value={"form_id": "x", "password": "y"}):
+    with patch("auth.session._load_credentials", return_value={"form_id": "x", "password": "y"}):
         s = AuthSession(mock_ctx)
     s.page = mock_page
     s._logged_in = True
@@ -57,7 +57,7 @@ class TestEnsureSession:
 
     def test_relogin_when_page_is_none(self):
         mock_ctx = MagicMock()
-        with patch("auth_session._load_credentials", return_value={"form_id": "x", "password": "y"}):
+        with patch("auth.session._load_credentials", return_value={"form_id": "x", "password": "y"}):
             session = AuthSession(mock_ctx)
         session.page = None
         session._logged_in = True
@@ -80,7 +80,7 @@ class TestIsLoggedIn:
         mock_page.locator.return_value.first = loc
 
         mock_ctx = MagicMock()
-        with patch("auth_session._load_credentials", return_value={"form_id": "x", "password": "y"}):
+        with patch("auth.session._load_credentials", return_value={"form_id": "x", "password": "y"}):
             session = AuthSession(mock_ctx)
         session.page = mock_page
 
@@ -95,7 +95,7 @@ class TestIsLoggedIn:
         mock_page.locator.return_value.first = loc
 
         mock_ctx = MagicMock()
-        with patch("auth_session._load_credentials", return_value={"form_id": "x", "password": "y"}):
+        with patch("auth.session._load_credentials", return_value={"form_id": "x", "password": "y"}):
             session = AuthSession(mock_ctx)
         session.page = mock_page
 
@@ -109,7 +109,7 @@ class TestIsLoggedIn:
         mock_page.query_selector.return_value = nav
 
         mock_ctx = MagicMock()
-        with patch("auth_session._load_credentials", return_value={"form_id": "x", "password": "y"}):
+        with patch("auth.session._load_credentials", return_value={"form_id": "x", "password": "y"}):
             session = AuthSession(mock_ctx)
         session.page = mock_page
 
@@ -129,7 +129,7 @@ class TestIsLoggedIn:
         mock_page.locator.side_effect = locator_side_effect
 
         mock_ctx = MagicMock()
-        with patch("auth_session._load_credentials", return_value={"form_id": "x", "password": "y"}):
+        with patch("auth.session._load_credentials", return_value={"form_id": "x", "password": "y"}):
             session = AuthSession(mock_ctx)
         session.page = mock_page
 

@@ -49,7 +49,7 @@ from validation_service import ValidationService  # type: ignore[import]
 from url_config import UrlConfig                  # type: ignore[import]
 from report_generator import ReportGenerator      # type: ignore[import]
 from email_service import EmailService            # type: ignore[import]
-from auth_session import AuthSession              # type: ignore[import]
+from auth import AuthSession
 
 # ---------------------------------------------------------------------------
 # Backward-compatible re-exports so existing callers of

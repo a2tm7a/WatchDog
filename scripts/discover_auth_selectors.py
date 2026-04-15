@@ -48,7 +48,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 from playwright.sync_api import sync_playwright, Page
 from playwright_stealth import Stealth
 
-from auth_session import (
+from auth import (
     FORM_ID_FIELD_SELECTORS,
     PASSWORD_INNER,
     POST_LOAD_LATE_POPUP_SEC,
