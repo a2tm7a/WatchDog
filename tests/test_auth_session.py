@@ -66,3 +66,71 @@ class TestEnsureSession:
             session._ensure_session()
 
         mock_login.assert_called_once()
+
+
+class TestIsLoggedIn:
+    """_is_logged_in: nav CTA visibility + optional strict positive selectors."""
+
+    def test_strict_false_when_nav_hidden_but_no_positive(self, monkeypatch):
+        monkeypatch.setenv("WATCHDOG_AUTH_STRICT_SUCCESS", "1")
+        mock_page = MagicMock()
+        mock_page.query_selector.return_value = None
+        loc = MagicMock()
+        loc.is_visible.return_value = False
+        mock_page.locator.return_value.first = loc
+
+        mock_ctx = MagicMock()
+        with patch("auth_session._load_credentials", return_value={"form_id": "x", "password": "y"}):
+            session = AuthSession(mock_ctx)
+        session.page = mock_page
+
+        assert session._is_logged_in() is False
+
+    def test_non_strict_true_when_nav_hidden_without_positive(self, monkeypatch):
+        monkeypatch.delenv("WATCHDOG_AUTH_STRICT_SUCCESS", raising=False)
+        mock_page = MagicMock()
+        mock_page.query_selector.return_value = None
+        loc = MagicMock()
+        loc.is_visible.return_value = False
+        mock_page.locator.return_value.first = loc
+
+        mock_ctx = MagicMock()
+        with patch("auth_session._load_credentials", return_value={"form_id": "x", "password": "y"}):
+            session = AuthSession(mock_ctx)
+        session.page = mock_page
+
+        assert session._is_logged_in() is True
+
+    def test_false_when_nav_login_visible(self, monkeypatch):
+        monkeypatch.delenv("WATCHDOG_AUTH_STRICT_SUCCESS", raising=False)
+        mock_page = MagicMock()
+        nav = MagicMock()
+        nav.is_visible.return_value = True
+        mock_page.query_selector.return_value = nav
+
+        mock_ctx = MagicMock()
+        with patch("auth_session._load_credentials", return_value={"form_id": "x", "password": "y"}):
+            session = AuthSession(mock_ctx)
+        session.page = mock_page
+
+        assert session._is_logged_in() is False
+
+    def test_strict_true_when_positive_matches(self, monkeypatch):
+        monkeypatch.setenv("WATCHDOG_AUTH_STRICT_SUCCESS", "1")
+        mock_page = MagicMock()
+        mock_page.query_selector.return_value = None
+
+        def locator_side_effect(sel: str):
+            m = MagicMock()
+            visible = "Log out" in sel
+            m.first.is_visible = MagicMock(return_value=visible)
+            return m
+
+        mock_page.locator.side_effect = locator_side_effect
+
+        mock_ctx = MagicMock()
+        with patch("auth_session._load_credentials", return_value={"form_id": "x", "password": "y"}):
+            session = AuthSession(mock_ctx)
+        session.page = mock_page
+
+        assert session._is_logged_in() is True

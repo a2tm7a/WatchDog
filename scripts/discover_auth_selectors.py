@@ -13,6 +13,9 @@ Usage:
 Set HEADLESS=0 to watch the browser live:
     HEADLESS=0 python3 scripts/discover_auth_selectors.py
 
+Credentials: same as AuthSession — `WATCHDOG_TEST_FORM_ID` + `WATCHDOG_TEST_PASSWORD`
+or `test_credentials.json` (see `test_credentials.example.json`).
+
 Navigation uses domcontentloaded+load (not networkidle). Override ms if needed:
     WATCHDOG_GOTO_TIMEOUT_MS=90000 python3 scripts/discover_auth_selectors.py
 """
@@ -26,7 +29,15 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 from playwright.sync_api import sync_playwright, Page
 from playwright_stealth import Stealth
 
-from auth_session import POST_LOAD_LATE_POPUP_SEC, _dismiss_optional_overlays
+from auth_session import (
+    FORM_ID_INPUT_INNER,
+    PASSWORD_INNER,
+    POST_LOAD_LATE_POPUP_SEC,
+    SUBMIT_INNER,
+    _dismiss_optional_overlays,
+    _load_credentials,
+    login_modal_locator,
+)
 
 STEALTH   = Stealth()
 HEADLESS  = os.environ.get("HEADLESS", "1") != "0"
@@ -253,15 +264,15 @@ def _dump_post_login_stream_switcher(page: Page) -> None:
 # ---------------------------------------------------------------------------
 
 def main() -> None:
-    creds_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "test_credentials.json")
-    if not os.path.exists(creds_path):
-        print(f"ERROR: {creds_path} not found — cannot attempt login.")
-        print("Create it from test_credentials.example.json first.")
+    try:
+        creds = _load_credentials()
+    except FileNotFoundError as exc:
+        print(f"ERROR: {exc}")
+        print(
+            "Set WATCHDOG_TEST_FORM_ID and WATCHDOG_TEST_PASSWORD, or create "
+            "test_credentials.json from test_credentials.example.json."
+        )
         sys.exit(1)
-
-    import json
-    with open(creds_path) as f:
-        creds = json.load(f)
 
     print(f"Headless: {HEADLESS}")
     print(f"Credentials: form_id={creds['form_id'][:4]}***")
@@ -332,42 +343,21 @@ def main() -> None:
 
         _dump_page_state(page, ">>> After 'Continue with Form ID' — COPY THESE INPUT SELECTORS <<<")
 
-        # ── Step 4: Fill credentials using .first to avoid homepage fields ───
-        print("\nStep 4: Filling Form ID credentials (using .first locator)...")
+        # ── Step 4: Fill credentials (same modal scope as AuthSession.login) ───
+        print("\nStep 4: Filling Form ID credentials (modal-scoped locators)...")
+        scope = login_modal_locator(page)
+        try:
+            fid = scope.locator(FORM_ID_INPUT_INNER)
+            print(f"  Form ID field matches: {fid.count()} (in scope)")
+            fid.first.fill(creds["form_id"], timeout=5_000)
+            print(f"  ✓ Filled form_id via {FORM_ID_INPUT_INNER!r} (scoped)")
+        except Exception as e:
+            print(f"  ✗ Could not fill form_id: {e}")
 
-        # Try known form_id selectors — check which one is visible now
-        form_id_candidates = [
-            "input[name='formId']",
-            "input[id='formId']",
-            "input[placeholder*='Form ID']",
-            "input[placeholder*='form id']",
-            "input[placeholder*='Form Id']",
-            "input[type='text']",  # last resort, use .first
-        ]
-        form_id_sel_used = None
-        for sel in form_id_candidates:
-            loc = page.locator(sel)
-            count = loc.count()
-            if count > 0:
-                vis = sum(1 for i in range(count) if loc.nth(i).is_visible())
-                print(f"  Candidate {sel!r}: {count} in DOM, {vis} visible")
-                if vis > 0 and form_id_sel_used is None:
-                    form_id_sel_used = sel
-
-        if form_id_sel_used:
-            try:
-                page.locator(form_id_sel_used).first.fill(creds["form_id"], timeout=5_000)
-                print(f"  ✓ Filled form_id using .first of {form_id_sel_used!r}")
-            except Exception as e:
-                print(f"  ✗ Could not fill form_id: {e}")
-        else:
-            print("  ✗ No visible form_id input found")
-
-        # Check for password field
-        pass_loc = page.locator("input[type='password']")
+        pass_loc = scope.locator(PASSWORD_INNER)
         pass_count = pass_loc.count()
         pass_visible = sum(1 for i in range(pass_count) if pass_loc.nth(i).is_visible())
-        print(f"  Password inputs: {pass_count} in DOM, {pass_visible} visible")
+        print(f"  Password inputs (scoped): {pass_count} in DOM, {pass_visible} visible")
         if pass_visible > 0:
             try:
                 pass_loc.first.fill(creds["password"], timeout=5_000)
@@ -377,8 +367,7 @@ def main() -> None:
         else:
             print("  (password field not yet visible — may appear after form_id step)")
 
-        # Submit
-        submit_loc = page.locator("button[type='submit'], button:has-text('Login'), button:has-text('Sign In')")
+        submit_loc = scope.locator(SUBMIT_INNER)
         try:
             submit_loc.first.click(timeout=5_000)
             try:

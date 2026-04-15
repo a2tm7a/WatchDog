@@ -31,9 +31,9 @@ import json
 import logging
 import os
 import time
-from typing import Optional
+from typing import Any, Optional
 
-from playwright.sync_api import BrowserContext, Page
+from playwright.sync_api import BrowserContext, Locator, Page
 
 # ---------------------------------------------------------------------------
 # Selectors — confirmed via scripts/discover_auth_selectors.py on 2026-04-15
@@ -57,16 +57,27 @@ FORM_ID_FLOW_BUTTON = (
 # Headless allen.in can be slow; 8s was too tight for modal paint + hydration.
 _AUTH_MODAL_OPEN_MS = int(os.environ.get("WATCHDOG_AUTH_MODAL_MS", "25000"))
 
-# Step 3: Form ID input (appears after clicking Continue with Form ID)
-# TODO: confirm selector by running discover_auth_selectors.py and clicking
-#       "Continue with Form ID" to see what input appears.
-FORM_ID_INPUT = "input[name='formId'], input[placeholder*='Form ID'], input[placeholder*='form id'], input[type='text']:visible"
+# Step 3–5: Fields inside the login modal (scoped via login_modal_locator in login()).
+# Avoid bare `input[type='text']:visible` — it matches marketing fields outside the modal.
+FORM_ID_INPUT_INNER = (
+    "input[name='formId'], input#formId, "
+    "input[placeholder*='Form ID'], input[placeholder*='form id'], input[placeholder*='Form Id']"
+)
+PASSWORD_INNER = "input[type='password']"
+SUBMIT_INNER = "button[type='submit'], button:has-text('Login'), button:has-text('Sign In')"
 
-# Step 4: Password input
-PASSWORD_SELECTOR = "input[type='password']"
+# Legacy export name (same as inner; login always prefers modal scope first).
+FORM_ID_INPUT = FORM_ID_INPUT_INNER
+PASSWORD_SELECTOR = PASSWORD_INNER
+SUBMIT_SELECTOR = SUBMIT_INNER
 
-# Step 5: Submit button inside the Form ID login form
-SUBMIT_SELECTOR = "button[type='submit'], button:has-text('Login'), button:has-text('Sign In')"
+# Optional UI signals that logged-in chrome is present (see AUTH_UI_FLOW.md).
+LOGGED_IN_POSITIVE_SELECTORS: tuple[str, ...] = (
+    "text=Log out",
+    "text=Logout",
+    "[data-testid*='profile']",
+    "[data-testid*='Profile']",
+)
 
 # Confirms a successful login — nav "Login" button disappears and a user
 # avatar / profile icon appears. We detect login by absence of the nav button.
@@ -168,6 +179,68 @@ def _dismiss_optional_overlays(page: Page) -> None:
         pass
 
 
+def _auth_ui_snapshot(page: Page) -> dict[str, Any]:
+    """Compact DOM counts for tracing which login step the UI is on."""
+    try:
+        return page.evaluate(
+            """() => {
+              const ids = ['loginCtaButton','FormIdLoginButtonWeb','submitOTPButton',
+                'usernameLoginButtonWeb'];
+              const testIds = {};
+              for (const id of ids) {
+                testIds[id] = document.querySelectorAll('[data-testid="' + id + '"]').length;
+              }
+              return {
+                testIds,
+                dialogRoleCount: document.querySelectorAll('[role="dialog"]').length,
+                dataTestIdDialog: document.querySelectorAll('[data-testid="dialog"]').length,
+              };
+            }"""
+        )
+    except Exception as exc:
+        return {"error": str(exc)}
+
+
+def login_modal_locator(page: Page) -> Locator:
+    """
+    Prefer a visible [role="dialog"] that contains auth controls.
+    Falls back to first visible dialog, then body (legacy — narrow field selectors only).
+    """
+    filtered = page.locator('[role="dialog"]').filter(
+        has=page.locator(
+            "button[data-testid='FormIdLoginButtonWeb'], button[data-testid*='FormIdLogin'], "
+            "input[name='formId'], input[type='password']"
+        )
+    )
+    if filtered.count() > 0:
+        try:
+            filtered.first.wait_for(state="visible", timeout=10_000)
+            return filtered.first
+        except Exception:
+            pass
+    any_dlg = page.locator('[role="dialog"]')
+    if any_dlg.count() > 0:
+        try:
+            any_dlg.first.wait_for(state="visible", timeout=5_000)
+            return any_dlg.first
+        except Exception:
+            pass
+    return page.locator("body")
+
+
+def _auth_debug_screenshot(page: Page, tag: str) -> None:
+    if os.environ.get("WATCHDOG_AUTH_DEBUG", "").lower() not in ("1", "true", "yes"):
+        return
+    reports = os.path.join(os.path.dirname(__file__), "reports")
+    os.makedirs(reports, exist_ok=True)
+    path = os.path.join(reports, f"auth-debug-{tag}-{int(time.time())}.png")
+    try:
+        page.screenshot(path=path, full_page=True)
+        logging.info("[AUTH] Debug screenshot written: %s", path)
+    except Exception as exc:
+        logging.warning("[AUTH] Debug screenshot failed: %s", exc)
+
+
 # ---------------------------------------------------------------------------
 # Credential loading
 # ---------------------------------------------------------------------------
@@ -223,6 +296,19 @@ class AuthSession:
         self._creds    = _load_credentials()
         self._logged_in = False
 
+    def _auth_trace(self, attempt: int, step: str) -> None:
+        if self.page is None or self.page.is_closed():
+            logging.info("[AUTH][trace] attempt=%s step=%s page=closed", attempt, step)
+            return
+        snap = _auth_ui_snapshot(self.page)
+        logging.info(
+            "[AUTH][trace] attempt=%s step=%s url=%s snapshot=%s",
+            attempt,
+            step,
+            self.page.url,
+            snap,
+        )
+
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
@@ -243,15 +329,19 @@ class AuthSession:
             self.page = self.context.new_page()
 
         for attempt in range(1, 4):
+            last_step = "init"
             try:
                 # Step 1 — land on homepage (avoid networkidle — see _goto_spa_no_networkidle)
+                last_step = "goto_home"
                 _goto_spa_no_networkidle(self.page, BASE_URL)
                 logging.info(
                     "[AUTH] Waiting %.1fs for late homepage popup…",
                     POST_LOAD_LATE_POPUP_SEC,
                 )
                 time.sleep(POST_LOAD_LATE_POPUP_SEC)
+                last_step = "dismiss_overlays"
                 _dismiss_optional_overlays(self.page)
+                self._auth_trace(attempt, last_step)
 
                 if attempt > 1:
                     # Clear a stuck modal / overlay from a previous failed attempt
@@ -265,19 +355,24 @@ class AuthSession:
                 #   a) wait for the nav Login button to be visible before clicking it
                 #   b) wait for Form ID entry in the modal to become VISIBLE before
                 #      clicking — allow extra time for hydration in headless mode.
+                last_step = "nav_login_click"
                 nav_btn_loc = self.page.locator(NAV_LOGIN_BUTTON)
                 nav_btn_loc.first.wait_for(state="visible", timeout=15_000)
                 nav_btn_loc.first.click(timeout=15_000)
                 logging.info("[AUTH] Nav Login button clicked.")
+                self._auth_trace(attempt, last_step)
 
                 # Optional: dialog shell (not all builds use role=dialog).
+                last_step = "wait_dialog_shell"
                 try:
                     self.page.locator('[role="dialog"]').first.wait_for(
                         state="visible", timeout=min(12_000, _AUTH_MODAL_OPEN_MS)
                     )
                 except Exception:
                     pass
+                self._auth_trace(attempt, last_step)
 
+                last_step = "wait_form_id_flow"
                 form_id_flow_loc = self.page.locator(FORM_ID_FLOW_BUTTON)
                 try:
                     form_id_flow_loc.first.wait_for(
@@ -294,33 +389,39 @@ class AuthSession:
                 logging.info("[AUTH] Login modal opened.")
 
                 # Step 3 — click "Continue with Form ID" (now confirmed visible)
+                last_step = "click_form_id_flow"
                 form_id_flow_loc.first.click(timeout=15_000)
                 time.sleep(0.5)  # allow form transition animation
                 logging.info("[AUTH] Form ID flow selected.")
+                self._auth_trace(attempt, last_step)
 
-                # Step 4 — fill Form ID.
-                # After clicking "Continue with Form ID", a form_id input appears inside
-                # the modal. Use .first to avoid matching the homepage FullName field.
-                self.page.locator(FORM_ID_INPUT).first.fill(
+                # Step 4–6 — fill inside modal scope (falls back to body + narrow selectors).
+                last_step = "resolve_modal_scope"
+                scope = login_modal_locator(self.page)
+                self._auth_trace(attempt, last_step)
+
+                last_step = "fill_form_id"
+                scope.locator(FORM_ID_INPUT_INNER).first.fill(
                     self._creds["form_id"], timeout=15_000
                 )
 
-                # Step 5 — fill password (only appears after form_id is entered on some
-                # sites; if it's a two-step flow, wait briefly first)
+                last_step = "fill_password"
                 time.sleep(0.3)
-                self.page.locator(PASSWORD_SELECTOR).first.fill(
+                scope.locator(PASSWORD_INNER).first.fill(
                     self._creds["password"], timeout=15_000
                 )
 
-                # Step 6 — submit (first visible submit button in the modal)
-                self.page.locator(SUBMIT_SELECTOR).first.click(timeout=15_000)
+                last_step = "submit"
+                scope.locator(SUBMIT_INNER).first.click(timeout=15_000)
                 try:
                     self.page.wait_for_load_state("load", timeout=30_000)
                 except Exception:
                     pass
                 time.sleep(0.5)
+                self._auth_trace(attempt, last_step)
 
                 # Step 7 — confirm login
+                last_step = "confirm_logged_in"
                 if self._is_logged_in():
                     self._logged_in = True
                     logging.info("[AUTH] Login confirmed. URL: %s", self.page.url)
@@ -330,10 +431,13 @@ class AuthSession:
                     "[AUTH] Login attempt %d/3 not confirmed. URL: %s",
                     attempt, self.page.url,
                 )
+                self._auth_trace(attempt, last_step)
                 time.sleep(3)
 
             except Exception as exc:
-                logging.warning("[AUTH] Login attempt %d/3 raised: %s", attempt, exc)
+                logging.warning("[AUTH] Login attempt %d/3 raised at %s: %s", attempt, last_step, exc)
+                self._auth_trace(attempt, f"error_after_{last_step}")
+                _auth_debug_screenshot(self.page, f"a{attempt}-{last_step}")
                 time.sleep(3)
 
         raise RuntimeError(
@@ -389,19 +493,45 @@ class AuthSession:
 
     def _is_logged_in(self) -> bool:
         """
-        Return True if the nav "Login" button is gone — the most reliable
-        signal that allen.in considers us authenticated.
+        True when the nav Login CTA is not visible and either a positive
+        logged-in chrome signal matches, or (by default) we infer success from
+        the nav CTA alone. Set WATCHDOG_AUTH_STRICT_SUCCESS=1 to require a
+        positive selector match.
         """
         if self.page is None:
             return False
         try:
-            # If the nav Login button is still visible, we're not logged in
             nav_btn = self.page.query_selector(NAV_LOGIN_STILL_VISIBLE)
             if nav_btn and nav_btn.is_visible():
                 return False
-            return True
         except Exception:
             return False
+
+        strict = os.environ.get("WATCHDOG_AUTH_STRICT_SUCCESS", "").lower() in (
+            "1",
+            "true",
+            "yes",
+        )
+        for sel in LOGGED_IN_POSITIVE_SELECTORS:
+            try:
+                loc = self.page.locator(sel).first
+                if loc.is_visible(timeout=600):
+                    logging.debug("[AUTH] Logged-in check: positive match %r", sel)
+                    return True
+            except Exception:
+                continue
+
+        if strict:
+            logging.warning(
+                "[AUTH] Strict logged-in check failed: nav login hidden but no positive selector."
+            )
+            return False
+
+        logging.debug(
+            "[AUTH] Logged-in inferred (nav login hidden; no positive selector). "
+            "Set WATCHDOG_AUTH_STRICT_SUCCESS=1 to require profile/logout UI."
+        )
+        return True
 
     def _ensure_session(self) -> None:
         """

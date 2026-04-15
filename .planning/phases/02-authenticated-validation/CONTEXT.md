@@ -5,6 +5,8 @@
 **Status:** Ready for planning
 **Created:** 2026-04-15
 
+**Login UI contract:** See [AUTH_UI_FLOW.md](AUTH_UI_FLOW.md) for the allen.in modal flow, unsupported branches (OTP/CAPTCHA), and debug env vars.
+
 ---
 
 ## Phase Scope (Locked)

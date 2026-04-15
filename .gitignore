@@ -8,6 +8,7 @@ __pycache__/
 *.pyo
 # Ignore generated run reports, but keep reports/README.md and reports/.gitkeep
 reports/report_*.md
+reports/auth-debug-*.png
 # Email credentials — never commit
 email_config.json
 # Test account credentials — never commit
