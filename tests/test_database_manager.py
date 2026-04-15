@@ -83,6 +83,23 @@ class TestCreateRun:
         assert isinstance(run_id, int)
         assert run_id > 0
 
+    def test_create_run_stores_mode_and_profile(self, dm):
+        rid = dm.create_run(mode="authenticated", profile="JEE")
+        with sqlite3.connect(dm.db_name) as conn:
+            row = conn.execute(
+                "SELECT mode, profile FROM runs WHERE run_id=?", (rid,)
+            ).fetchone()
+        assert row == ("authenticated", "JEE")
+
+    def test_create_run_defaults_guest(self, dm):
+        rid = dm.create_run()
+        with sqlite3.connect(dm.db_name) as conn:
+            row = conn.execute(
+                "SELECT mode, profile FROM runs WHERE run_id=?", (rid,)
+            ).fetchone()
+        assert row[0] == "guest"
+        assert row[1] is None
+
     def test_successive_runs_have_different_ids(self, dm):
         run1 = dm.create_run()
         run2 = dm.create_run()

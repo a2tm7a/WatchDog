@@ -360,3 +360,66 @@ class TestQueryDbStats:
         )
         # run2 has no courses, so stats should be empty
         assert gen._query_db_stats() == {}
+
+
+# ---------------------------------------------------------------------------
+# Phase 2 — guest vs authenticated report filenames
+# ---------------------------------------------------------------------------
+
+class TestReportFilenameModeProfile:
+    def test_guest_suffix_in_filename(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(rg_module, "REPORTS_DIR", str(tmp_path / "reports"))
+        db_path = str(tmp_path / "m.db")
+        dm = DatabaseManager(db_path)
+        rid = dm.create_run(mode="guest", profile=None)
+        dm.save_batch(
+            [
+                {
+                    "base_url": "https://example.com/p",
+                    "course_name": "C",
+                    "cta_link": "https://example.com/c",
+                    "price": "₹1",
+                    "pdp_price": "₹1",
+                    "cta_status": "Found (Enroll Now)",
+                    "is_broken": 0,
+                    "price_mismatch": 0,
+                    "viewport": "desktop",
+                }
+            ],
+            rid,
+        )
+        vs = ValidationService(db_path)
+        vs.validate_all_courses(run_id=rid)
+        start = datetime(2025, 3, 1, 12, 0, 0)
+        gen = ReportGenerator(
+            validation_service=vs,
+            db_name=db_path,
+            start_time=start,
+            urls_scraped=["https://example.com/p"],
+            run_id=rid,
+            mode="guest",
+            profile=None,
+        )
+        path = gen.save()
+        assert path.endswith("_guest.md")
+        assert "2025-03-01_12-00-00" in os.path.basename(path)
+
+    def test_authenticated_suffix_in_filename(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(rg_module, "REPORTS_DIR", str(tmp_path / "reports"))
+        db_path = str(tmp_path / "a.db")
+        dm = DatabaseManager(db_path)
+        rid = dm.create_run(mode="authenticated", profile="NEET")
+        vs = ValidationService(db_path)
+        vs.validate_all_courses(run_id=rid)
+        start = datetime(2025, 3, 2, 8, 30, 0)
+        gen = ReportGenerator(
+            validation_service=vs,
+            db_name=db_path,
+            start_time=start,
+            urls_scraped=["https://example.com/p"],
+            run_id=rid,
+            mode="authenticated",
+            profile="NEET",
+        )
+        path = gen.save()
+        assert path.endswith("_auth_NEET.md")

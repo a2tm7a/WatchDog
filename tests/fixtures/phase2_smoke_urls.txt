@@ -1,0 +1,3 @@
+# Minimal URL set for manual / CI smoke: one homepage card scrape + auth attempt.
+[HOME]
+https://allen.in/

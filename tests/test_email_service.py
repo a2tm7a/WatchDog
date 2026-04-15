@@ -250,24 +250,26 @@ class TestBuildMessage:
             start_time=datetime(2024, 1, 15, 10, 0, 0),
         )
 
-    def test_subject_contains_issue_count_when_issues(self):
+    def test_subject_contains_date_stamp(self):
+        """Subject is WatchDog Report — YYYY-MM-DD (issue counts live in HTML body)."""
         msg = self._build(WITH_ISSUES)
-        assert "3" in msg["Subject"]
+        assert "WatchDog Report — 2024-01-15" == msg["Subject"]
 
-    def test_subject_indicates_all_passed_when_no_issues(self):
+    def test_subject_guest_has_no_profile_suffix(self):
         msg = self._build(NO_ISSUES)
-        subj = msg["Subject"]
-        assert "passed" in subj.lower() or "✅" in subj
+        assert msg["Subject"] == "WatchDog Report — 2024-01-15"
+        assert "[Auth:" not in msg["Subject"]
 
-    def test_subject_singular_issue(self):
+    def test_subject_includes_auth_profile_when_set(self):
         svc = make_service(BASE_CONFIG)
         msg = svc._build_message(
-            "", {"total_issues": 1, "by_type": {}, "by_severity": {}},
-            run_id=1, start_time=datetime(2024, 1, 1)
+            "",
+            {"total_issues": 1, "by_type": {}, "by_severity": {}},
+            run_id=1,
+            start_time=datetime(2024, 1, 1),
+            profile="JEE",
         )
-        # "1 issue" (not "1 issues")
-        assert "1 issue" in msg["Subject"]
-        assert "1 issues" not in msg["Subject"]
+        assert msg["Subject"] == "WatchDog Report — 2024-01-01 [Auth: JEE]"
 
     def test_from_header_set_correctly(self):
         assert self._build()["From"] == "WatchDog <user@example.com>"
